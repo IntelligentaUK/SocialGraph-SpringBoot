@@ -1,5 +1,5 @@
 # SocialGraph
-A Social Graph written in Java — Includes Authentication, REST API, follow graph and more.
+In-memory Redis Social Graph written in Java — Includes Authentication, REST API, follow graph and more.
 
 WIP
 --
