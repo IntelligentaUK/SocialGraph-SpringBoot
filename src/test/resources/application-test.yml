@@ -1,0 +1,17 @@
+# Test Profile Configuration
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+jwt:
+  secret: test-secret-key-minimum-32-characters-for-testing
+  expiration: 3600000
+  issuer: socialgraph-test
+
+logging:
+  level:
+    root: WARN
+    com.camerarrific.socialgraph: DEBUG
+

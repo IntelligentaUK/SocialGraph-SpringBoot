@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # SocialGraph API Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: socialgraph-api
+    ports:
+      - "8080:8080"
+    environment:
+      # Spring profiles
+      - SPRING_PROFILES_ACTIVE=dev
+      
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      
+      # JWT configuration (change in production!)
+      - JWT_SECRET=dev-secret-key-minimum-32-characters-long-for-hs256
+      - JWT_EXPIRATION=86400000
+      - JWT_ISSUER=socialgraph
+      
+      # Azure Storage (optional - set these for blob storage)
+      # - AZURE_STORAGE_CONNECTION_STRING=
+      # - AZURE_STORAGE_ACCOUNT_NAME=
+      # - AZURE_STORAGE_CONTAINER=photos
+      
+      # Mail configuration (optional)
+      # - MAIL_HOST=smtp.example.com
+      # - MAIL_PORT=587
+      # - MAIL_USERNAME=
+      # - MAIL_PASSWORD=
+      
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - socialgraph-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis Database
+  redis:
+    image: redis:7-alpine
+    container_name: socialgraph-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - socialgraph-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Commander (optional - web UI for Redis)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: socialgraph-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - socialgraph-network
+    profiles:
+      - debug
+    restart: unless-stopped
+
+networks:
+  socialgraph-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
+

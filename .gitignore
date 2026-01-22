@@ -1,0 +1,66 @@
+# Compiled class files
+*.class
+
+# Log files
+*.log
+logs/
+
+# Package files
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Build directories
+target/
+build/
+out/
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+nb-configuration.xml
+nbactions.xml
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+*.env
+!.env.example
+
+# Maven wrapper jar (downloaded automatically)
+.mvn/wrapper/maven-wrapper.jar
+
+# Spring Boot
+spring-boot-devtools.properties
+
+# Test coverage
+jacoco.exec
+*.exec
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~

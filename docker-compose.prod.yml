@@ -1,0 +1,64 @@
+version: '3.8'
+
+# Production Docker Compose configuration
+# Use: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  app:
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      
+      # Redis configuration (use external managed Redis in production)
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_SSL=true
+      
+      # JWT configuration (MUST be set via environment)
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-86400000}
+      - JWT_ISSUER=${JWT_ISSUER:-socialgraph}
+      
+      # Azure Storage
+      - AZURE_STORAGE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING}
+      - AZURE_STORAGE_ACCOUNT_NAME=${AZURE_STORAGE_ACCOUNT_NAME}
+      - AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER:-photos}
+      
+      # Mail configuration
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_SMTP_AUTH=true
+      - MAIL_STARTTLS=true
+      
+      # Swagger disabled in production
+      - SWAGGER_ENABLED=false
+      
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  redis:
+    # In production, consider using managed Redis (Azure Cache, AWS ElastiCache, etc.)
+    # If self-hosting, add authentication
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD} --maxmemory 1gb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+

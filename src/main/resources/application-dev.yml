@@ -1,0 +1,25 @@
+# Development Profile Configuration
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+# More verbose logging for development
+logging:
+  level:
+    root: INFO
+    com.camerarrific.socialgraph: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+
+# Development JWT secret (NEVER use in production)
+jwt:
+  secret: dev-secret-key-minimum-32-characters-long-for-hs256
+  expiration: 86400000
+
+# Swagger enabled for development
+springdoc:
+  swagger-ui:
+    enabled: true
+

@@ -1,0 +1,28 @@
+# Production Profile Configuration
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+      ssl:
+        enabled: ${REDIS_SSL:false}
+
+# Production logging - less verbose
+logging:
+  level:
+    root: WARN
+    com.camerarrific.socialgraph: INFO
+    org.springframework.security: WARN
+
+# Swagger disabled in production by default
+springdoc:
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+
+# Actuator security
+management:
+  endpoint:
+    health:
+      show-details: never
+
