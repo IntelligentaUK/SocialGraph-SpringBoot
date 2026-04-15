@@ -19,7 +19,7 @@ SocialGraph implements the core social surface a timeline app needs:
 - **Posts** — text, photo, and video status updates; replies; reshares; edit; delete.
 - **Timelines** — FIFO, personal-importance, and global-importance feeds per user.
 - **Reactions** — like, love, fav, and share with listable actor counts per post.
-- **Content filters** — negative keyword blocklists and MD5 image blocklists per user.
+- **Content filters** — negative keyword blocklists and MD5 image blocklists per user (Migration to NeuralNet based image similarity detection planned )
 - **Media** — seam-carved (liquid rescaled) image uploads pushed to the active object
 store, plus a provider-neutral signed upload target endpoint.
 
@@ -69,7 +69,7 @@ For LLM agents working in this repo:
 
 - `**[llms.txt](llms.txt)`** — compact LLM-oriented index
 - `**[llms-full.txt](llms-full.txt)`** — single-file documentation bundle for ingestion
-- `**[.claude/skills/](.claude/skills/README.md)**` — repo-local agent skills for common tasks
+- `**[.claude/skills/](.claude/skills/README.md)`** — repo-local agent skills for common tasks
 - **[Agent skills index](docs/agent-skills.md)** — what each skill does
 
 ## Repository layout
