@@ -1,0 +1,3738 @@
+# SocialGraph — Full documentation bundle
+
+This is the single-file aggregation of every canonical documentation page in
+the SocialGraph repository. It is intended for LLM ingestion. For the
+browsable, cross-linked version see `docs/README.md`.
+
+Files included (in this order):
+
+- README.md
+- CHANGELOG.md
+- docs/README.md
+- docs/getting-started.md
+- docs/configuration.md
+- docs/architecture.md
+- docs/authentication.md
+- docs/api/README.md
+- docs/api/auth.md
+- docs/api/users.md
+- docs/api/actions.md
+- docs/api/status.md
+- docs/api/timeline.md
+- docs/api/storage.md
+- docs/api/errors.md
+- docs/internals/redis-schema.md
+- docs/internals/timeline-delivery.md
+- docs/internals/storage-providers.md
+- docs/internals/image-pipeline.md
+- docs/internals/security-filter.md
+- docs/testing.md
+- docs/agent-skills.md
+- .claude/skills/README.md
+- .claude/skills/api-endpoint-work/SKILL.md
+- .claude/skills/redis-schema-work/SKILL.md
+- .claude/skills/storage-provider-work/SKILL.md
+
+---
+
+
+
+================================================================================
+FILE: README.md
+================================================================================
+
+# SocialGraph
+
+A social graph REST API written in Java 25 on Spring Boot 4, backed by Redis for all
+social state and pluggable object storage (Azure Blob, Google Cloud Storage, or
+Oracle Cloud Infrastructure) for media.
+
+> **Status: Alpha.** The API surface is stable enough to use for integration work, but
+> storage tuning and operational hardening are still in progress. The JVM test gate is
+> `./mvnw test`. Native-image support is configured but requires Graal-specific
+> follow-up. CPU-intensive work (hashing, encryption, seam carving) is a candidate for
+> a Rust port — not there yet.
+
+## What it does
+
+SocialGraph implements the core social surface a timeline app needs:
+
+- **Accounts** — register, login, activate, profile edit, RSA key exchange bootstrap.
+- **Graph** — follow / unfollow, friends (mutual follows), block / unblock, mute / unmute.
+- **Posts** — text, photo, and video status updates; replies; reshares; edit; delete.
+- **Timelines** — FIFO, personal-importance, and global-importance feeds per user.
+- **Reactions** — like, love, fav, and share with listable actor counts per post.
+- **Content filters** — negative keyword blocklists and MD5 image blocklists per user.
+- **Media** — seam-carved (liquid rescaled) image uploads pushed to the active object
+store, plus a provider-neutral signed upload target endpoint.
+
+The legacy advanced-auth helpers from the old codebase (`/api/aes/key`,
+`/api/get/image`, etc.) were intentionally **not** migrated. `/api/session` is
+preserved as the public RSA bootstrap endpoint.
+
+## Quickstart
+
+```bash
+# 1. Start Redis
+docker run -d --name socialgraph-redis -p 6379:6379 redis:7
+
+# 2. Point storage at a bucket you control, e.g. Azure Blob:
+export STORAGE_PROVIDER=azure
+export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=...;AccountKey=..."
+export AZURE_STORAGE_CONTAINER=photos
+
+# 3. Build and run
+./mvnw spring-boot:run
+# Server listens on http://localhost:4567
+```
+
+Smoke test:
+
+```bash
+curl http://localhost:4567/api/ping            # -> "hello"
+curl -X POST "http://localhost:4567/api/register?username=alice&password=hunter2&email=alice@example.com"
+```
+
+Full install, configuration, and run instructions: [docs/getting-started.md](docs/getting-started.md).
+
+## Documentation
+
+The complete documentation set lives under `[docs/](docs/README.md)`:
+
+- **[Getting started](docs/getting-started.md)** — install, run, environment
+- **[Configuration](docs/configuration.md)** — every environment variable and `application.yml` field
+- **[Architecture](docs/architecture.md)** — components, Redis-first data flow, Mermaid diagrams
+- **[Authentication](docs/authentication.md)** — token model, filter chain, public endpoints
+- **[API reference](docs/api/README.md)** — every endpoint: method, path, auth, params, responses
+- **[Internals](docs/internals/redis-schema.md)** — Redis schema, timeline delivery, storage providers, image pipeline
+- **[Testing](docs/testing.md)** — test surface, how to run, what is actually asserted
+- **[Changelog](CHANGELOG.md)**
+
+For LLM agents working in this repo:
+
+- `**[llms.txt](llms.txt)`** — compact LLM-oriented index
+- `**[llms-full.txt](llms-full.txt)**` — single-file documentation bundle for ingestion
+- `**[.claude/skills/](.claude/skills/README.md)**` — repo-local agent skills for common tasks
+- **[Agent skills index](docs/agent-skills.md)** — what each skill does
+
+## Repository layout
+
+```
+src/main/java/com/intelligenta/socialgraph/
+  SocialGraphApplication.java    Spring Boot entrypoint
+  controller/                    REST controllers (Auth, User, Action, Status, Timeline, Storage)
+  service/                       Business logic (User, Session, Share, Timeline, Action, Device)
+  service/storage/               ObjectStorageService + Azure/GCP/OCI impls
+  model/                         DTOs and records
+  config/                        AppProperties, StorageProperties, SecurityConfig, RedisConfig
+  security/                      TokenAuthenticationFilter, AuthenticatedUser
+  exception/                     Typed exceptions + GlobalExceptionHandler
+  util/                          Util, ImagePayloads
+  Verbs.java                     Action verb enum (like, love, fav, share, hug)
+  LiquidRescaler.java            Seam carving (liquid rescale)
+  PasswordHash.java              Argon2 / PBKDF2 helpers
+src/main/resources/application.yml
+src/test/java/com/intelligenta/socialgraph/
+  ApiSurfaceRegressionTest.java  Fixes the public HTTP surface (51 endpoints)
+  controller/                    Controller slice tests
+  service/                       Service tests
+  support/                       Custom @AuthenticationPrincipal resolver for tests
+```
+
+
+
+
+
+================================================================================
+FILE: CHANGELOG.md
+================================================================================
+
+# Changelog
+
+Append-only history of meaningful changes to SocialGraph. Entries are grouped by
+release. Unreleased work sits at the top.
+
+## [Unreleased]
+
+### Changed
+
+- **Initial deep documentation pass.** Added the `docs/` tree (getting started,
+  configuration, architecture, authentication, per-controller API reference, Redis
+  internals, storage providers, image pipeline, testing, agent skills), a new
+  top-level README that matches the current Spring Boot product, `llms.txt` and
+  `llms-full.txt` for LLM consumers, this changelog, and repo-local agent skills
+  under `.claude/skills/`. No behavior changes.
+
+## 1.0-SNAPSHOT — Java 25 / Spring Boot 4 migration
+
+This release is the landing point of the `migrate-complete` branch. The repository
+was converted from the legacy Spark / Couchbase / Jetty codebase to a single
+Spring Boot 4 application on Java 25.
+
+### Added
+
+- **Spring Boot 4 application shell.** `SocialGraphApplication` with classic
+  `@SpringBootApplication` wiring; server port `4567` (preserved from the legacy
+  Spark layout).
+- **Stateless Bearer-token auth** via `TokenAuthenticationFilter` and
+  `SecurityConfig` — Redis-backed token store at key `tokens:<token>` with
+  configurable TTL (`app.security.token-expiration-seconds`, default 86400s).
+- **Pluggable object storage** behind `ObjectStorageService`:
+  - `AzureObjectStorageService` — Azure Blob Storage with SAS upload URLs
+  - `GcpObjectStorageService` — Google Cloud Storage with V4 signed URLs
+  - `OciObjectStorageService` — OCI Object Storage with pre-authenticated requests
+  - Active provider selected by `storage.provider` (`azure` | `gcp` | `oci`).
+- **Controllers.** `AuthController`, `UserController`, `ActionController`,
+  `StatusController`, `TimelineController`, `StorageController` — 51 total
+  endpoints, all under `/api`.
+- **Services.** `UserService`, `SessionService`, `ShareService`, `TimelineService`,
+  `ActionService`, `DeviceService`, plus storage services. Everything persists to
+  Redis via `StringRedisTemplate`.
+- **Timeline delivery** — `ShareService.pushGraph` fan-out writes posts to each
+  follower's FIFO list, personal-importance zset, and everyone-importance zset,
+  honoring block / mute / negative-keyword / blocked-image filters.
+- **Image pipeline.** `ImagePayloads` detects JPEG / PNG / WebP from magic bytes and
+  parses base64 data URLs. `LiquidRescaler` performs seam-carving width reduction;
+  `POST /api/lq/upload` runs rescale then upload in one call.
+- **Typed exception hierarchy** + `GlobalExceptionHandler` with stable error codes
+  (`cannot_register`, `invalid_grant`, `user_not_found`, `cannot_follow`,
+  `cannot_unfollow`, `cannot_perform_action`, `auth_error`, `access_denied`,
+  `incomplete_request`, `invalid_request_body`, `unsupported_image_type`,
+  `media_upload_failed`, `storage_unavailable`, `internal_server_error`).
+- **Argon2 password hashing** via `PasswordHash.createArgon2Hash` /
+  `validateArgon2Hash` (legacy PBKDF2 helpers retained for read-side compatibility).
+
+### Preserved
+
+- `/api/session` — the public RSA key-exchange bootstrap endpoint, reimplemented
+  on top of Redis-stored session keypairs (`session:<uuid>`, TTL 1 day).
+- `/api/ping` — public health check, returns the string `"hello"`.
+
+### Removed
+
+- **Spark framework.** All Spark route handlers and the Spark runtime dependency.
+- **Couchbase storage.** Post, user, and session state now live in Redis.
+- **Legacy advanced-auth helpers.** `/api/aes/key`, `/api/get/image`, and related
+  crypto-helper routes were **intentionally not migrated** — `ApiSurfaceRegressionTest`
+  enforces that these routes do not exist. Consumers depending on them must be
+  updated.
+- **`.idea/` IntelliJ library XMLs** pinned to legacy Maven dependencies.
+
+### Breaking changes
+
+- **HTTP clients must now send `Authorization: Bearer <token>`.** The legacy query-string
+  token auth scheme is gone; `TokenAuthenticationFilter` reads the `Authorization`
+  header only.
+- **Response shapes are standardized.**
+  - Timeline responses use `entities` (not legacy `activity`); each entry carries
+    `actorUid`, `actorUsername`, `actorFullname` (not a nested `actor` block).
+  - Member-list responses use `setType` and `members` (not legacy `followers`).
+  - Action responses use `actionType` (plural form: `likes`, `loves`, `favs`,
+    `shares`) and `actors`.
+  - Errors are always `{ "error": "<code>", "error_description": "<message>" }`.
+- **Java 25 / Spring Boot 4 required.** Earlier JDKs will not compile the project.
+
+### Verification
+
+- `./mvnw test` — `ApiSurfaceRegressionTest` asserts the presence of all migrated
+  endpoints and the absence of the legacy routes.
+
+
+================================================================================
+FILE: docs/README.md
+================================================================================
+
+# SocialGraph documentation
+
+This is the index for the full documentation set. Each section below describes what
+the page covers so you can jump straight to the part you need.
+
+## Getting started
+
+- [**Getting started**](getting-started.md) — install prerequisites (Java 25, Maven
+  wrapper, Redis, a storage provider), run the app, run the tests, smoke-test the
+  API end to end.
+- [**Configuration**](configuration.md) — every `application.yml` field and every
+  environment variable, grouped by subsystem (server, Redis, mail, storage, app).
+
+## How the system works
+
+- [**Architecture**](architecture.md) — layered view of the application (controllers
+  → services → Redis + object storage), with Mermaid diagrams for the runtime shape
+  and the request lifecycle.
+- [**Authentication**](authentication.md) — stateless Bearer-token flow, public vs.
+  authenticated endpoints, `TokenAuthenticationFilter` behavior, how
+  `@AuthenticationPrincipal` resolves to `AuthenticatedUser`.
+
+## API reference
+
+See [**API reference index**](api/README.md). Each page documents exact method,
+path, auth requirement, request parameters, response shape, and error cases for one
+controller:
+
+- [Auth endpoints](api/auth.md) — `/api/login`, `/api/register`, `/api/activate`,
+  `/api/session`, `/api/ping`
+- [User & graph endpoints](api/users.md) — follow, unfollow, block, mute, profile,
+  search, RSA public keys, member lists
+- [Action endpoints](api/actions.md) — like, love, fav, share (plus reverse
+  operations and actor listings)
+- [Status / post endpoints](api/status.md) — post, read, reply, reshare, edit,
+  delete, devices, content filters
+- [Timeline endpoints](api/timeline.md) — FIFO, personal, everyone
+- [Storage endpoints](api/storage.md) — signed upload target, liquid-rescale upload
+- [Error codes](api/errors.md) — the complete mapping from typed exception to HTTP
+  status and JSON `error` code
+
+## Internals
+
+Documentation for maintainers and contributors:
+
+- [**Redis schema**](internals/redis-schema.md) — every key and hash field the
+  application touches, who reads and who writes it.
+- [**Timeline delivery**](internals/timeline-delivery.md) — the `pushGraph` fan-out
+  algorithm, the filters it applies, and the three timeline representations
+  (FIFO list, personal zset, everyone zset), with a Mermaid sequence diagram.
+- [**Storage providers**](internals/storage-providers.md) — the
+  `ObjectStorageService` contract, how the active provider is selected at startup,
+  and the Azure / GCP / OCI implementations.
+- [**Image pipeline**](internals/image-pipeline.md) — `ImagePayloads` MIME detection,
+  `LiquidRescaler` seam carving, how `POST /api/lq/upload` wires them together.
+- [**Security filter**](internals/security-filter.md) — `TokenAuthenticationFilter`
+  extraction, Redis lookups, `polyCount` side effect, and why the filter ordering
+  matters.
+
+## Testing
+
+- [**Testing**](testing.md) — the layout of `src/test/`, how
+  `ApiSurfaceRegressionTest` fixes the public surface, how controller tests inject
+  authenticated users via `TestAuthenticatedUserResolver`, and how to run the full
+  suite or a single class.
+
+## Agent-oriented documentation
+
+- [**Agent skills index**](agent-skills.md) — what each repo-local skill under
+  `.claude/skills/` does and when to invoke it.
+- [`../llms.txt`](../llms.txt) — compact LLM index pointing at this documentation.
+- [`../llms-full.txt`](../llms-full.txt) — single-file ingestion bundle.
+
+## History
+
+- [**Changelog**](../CHANGELOG.md) — append-only history, including the Java 25 /
+  Spring Boot 4 migration and its breaking changes.
+
+
+================================================================================
+FILE: docs/getting-started.md
+================================================================================
+
+# Getting started
+
+This page gets a developer from zero to a running SocialGraph instance with the
+tests passing locally.
+
+## Prerequisites
+
+| Dependency | Minimum | Notes |
+|------------|---------|-------|
+| JDK        | Java 25 | `java -version` should report 25. Earlier JDKs will not compile the project. |
+| Maven      | Bundled | Use the `./mvnw` wrapper that ships with the repo. |
+| Redis      | 5.0+    | The app uses `StringRedisTemplate`; any recent Redis works. |
+| Storage    | one of  | Azure Blob Storage, Google Cloud Storage, or OCI Object Storage. Default is Azure. |
+
+Optional:
+
+- GraalVM with the `native` profile if you want to try the native-image build
+  (still work-in-progress).
+
+## Clone and build
+
+```bash
+git clone <your-fork-or-this-repo> SocialGraph
+cd SocialGraph
+./mvnw -q package -DskipTests
+```
+
+## Start Redis
+
+```bash
+docker run -d --name socialgraph-redis -p 6379:6379 redis:7
+```
+
+Verify:
+
+```bash
+redis-cli ping   # -> PONG
+```
+
+If your Redis is on a different host / port / uses a password, export
+`REDIS_HOST`, `REDIS_PORT`, and/or `REDIS_PASSWORD` before starting the app — see
+[Configuration](configuration.md).
+
+## Pick a storage provider
+
+SocialGraph uploads media to exactly one object store. You pick the active provider
+via `STORAGE_PROVIDER`:
+
+### Azure Blob (default)
+
+```bash
+export STORAGE_PROVIDER=azure
+export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=...;AccountKey=..."
+export AZURE_STORAGE_CONTAINER=photos
+```
+
+### Google Cloud Storage
+
+```bash
+export STORAGE_PROVIDER=gcp
+export GCP_PROJECT_ID=my-project
+export GCP_STORAGE_BUCKET=my-bucket
+# Ensure GOOGLE_APPLICATION_CREDENTIALS points at a service-account key file.
+```
+
+### Oracle Cloud Infrastructure Object Storage
+
+```bash
+export STORAGE_PROVIDER=oci
+export OCI_OBJECT_STORAGE_NAMESPACE=my-namespace
+export OCI_OBJECT_STORAGE_BUCKET=my-bucket
+export OCI_REGION=us-ashburn-1
+# Optionally: OCI_CONFIG_FILE, OCI_PROFILE, OCI_OBJECT_STORAGE_ENDPOINT
+```
+
+All provider-specific fields are listed in [Configuration](configuration.md).
+
+## Run the app
+
+```bash
+./mvnw spring-boot:run
+```
+
+By default the server listens on `http://localhost:4567`.
+
+## Smoke test
+
+```bash
+# Health check (public endpoint)
+curl http://localhost:4567/api/ping
+# -> hello
+
+# Register a user (public endpoint)
+curl -X POST "http://localhost:4567/api/register?username=alice&password=hunter2&email=alice@example.com"
+# -> {"username":"alice","token":"...","uid":"...","expires_in":86400,"followers":"0","following":"0","activation_token":"..."}
+
+# Login (public endpoint) — returns a fresh token
+TOKEN=$(curl -s -X POST "http://localhost:4567/api/login?username=alice&password=hunter2" | jq -r .token)
+
+# Use the token for an authenticated request
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4567/api/me
+```
+
+If all four calls return `2xx` responses, the server is wired up correctly.
+
+## Run the tests
+
+The canonical verification gate is:
+
+```bash
+./mvnw test
+```
+
+What runs:
+
+- `ApiSurfaceRegressionTest` — fixes the full public HTTP surface (51 endpoints).
+  Any endpoint added to the product must appear here.
+- Controller slice tests (`AuthControllerTest`, `UserControllerTest`, etc.) — one
+  class per controller, using `MockMvc` with a `TestAuthenticatedUserResolver` to
+  inject `@AuthenticationPrincipal`.
+- Service tests (`UserServiceTest`, `ShareServiceTest`, etc.).
+- `CoreUtilitiesTest`, `ImagePayloadsTest` — utility contracts.
+- `SecurityConfigTest`, `TokenAuthenticationFilterTest` — auth wiring.
+
+See [Testing](testing.md) for how tests are structured and how to run individual
+classes.
+
+## What the server gives you
+
+After startup you have 51 HTTP endpoints under `/api`. The public set is
+`/api/ping`, `/api/session`, `/api/login`, `/api/register`, and `/api/activate`.
+Everything else requires a Bearer token.
+
+Full list: [API reference](api/README.md).
+
+## Troubleshooting
+
+- **`./mvnw` fails with `Unsupported class file major version`** — you are on a JDK
+  older than 25. Install Java 25 (Temurin, OpenJDK, or Zulu all work) and retry.
+- **Startup error `Unable to connect to Redis`** — Redis is not reachable at the
+  configured host / port. Start Redis or adjust `REDIS_HOST`.
+- **Startup warning `Failed to initialize Azure Blob Storage client`** — the Azure
+  provider loads lazily; the server will still start, but any upload endpoint will
+  return `storage_unavailable` until the connection string is correct.
+- **`401` on authenticated requests** — confirm the token came from `/api/login`
+  or `/api/register` and that you are sending `Authorization: Bearer <token>` (not
+  in a query string). Token TTL defaults to 86400 seconds.
+
+
+================================================================================
+FILE: docs/configuration.md
+================================================================================
+
+# Configuration
+
+Every setting SocialGraph honors, documented from
+[`src/main/resources/application.yml`](../src/main/resources/application.yml),
+[`AppProperties`](../src/main/java/com/intelligenta/socialgraph/config/AppProperties.java),
+and
+[`StorageProperties`](../src/main/java/com/intelligenta/socialgraph/config/StorageProperties.java).
+
+Environment variables override `application.yml` defaults. Everything below is the
+name used at runtime (not the YAML path) unless otherwise noted.
+
+## Server
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SERVER_PORT` | `4567` | Spring Boot standard env var. The YAML sets `server.port: 4567` to preserve the legacy Spark port. |
+
+## Redis
+
+Redis holds all social state (users, posts, tokens, timelines, reactions, blocks,
+mutes, counters, etc.). A Redis instance is required.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `REDIS_HOST` | `localhost` | Redis hostname |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_PASSWORD` | *(empty)* | Redis AUTH password, if required |
+
+Pooling uses Lettuce with these fixed values (not currently env-overridable):
+
+- `max-active: 8`
+- `max-idle: 8`
+- `min-idle: 0`
+
+Override by editing `application.yml` directly if you need different pool sizes.
+
+## Mail
+
+Spring Boot's `spring-boot-starter-mail` is on the classpath but the current code
+does not call it — activation delivery is a TODO. The mail block is wired up so
+activation emails can be added without reshaping config.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MAIL_HOST` | `localhost` | SMTP host |
+| `MAIL_PORT` | `587` | SMTP port |
+| `MAIL_USERNAME` | *(empty)* | SMTP user |
+| `MAIL_PASSWORD` | *(empty)* | SMTP password |
+
+`spring.mail.properties.mail.smtp.auth` and `starttls.enable` default to `false`;
+adjust in `application.yml` for production SMTP.
+
+## Object storage (shared)
+
+Selects the active `ObjectStorageService` bean and governs signed-URL TTL and
+object naming.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `STORAGE_PROVIDER` | `azure` | One of `azure`, `gcp`, `oci`. The matching service bean is activated via `@ConditionalOnProperty`. |
+| `STORAGE_SIGNED_URL_TTL_SECONDS` | `300` | TTL for signed upload URLs / SAS tokens / OCI pre-authenticated requests. |
+| `STORAGE_OBJECT_KEY_PREFIX` | *(empty)* | Optional prefix prepended to every generated object key. A trailing `/` is inferred if missing. |
+
+Object keys are always `<prefix>/<uuid><extension>` — see
+[`AbstractObjectStorageService.nextObjectKey`](../src/main/java/com/intelligenta/socialgraph/service/storage/AbstractObjectStorageService.java).
+
+## Azure Blob Storage
+
+Active when `STORAGE_PROVIDER=azure` (default).
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AZURE_STORAGE_CONNECTION_STRING` | *(placeholder)* | Full Azure connection string. Used by the SDK to create the `BlobServiceClient`. |
+| `AZURE_STORAGE_ACCOUNT_NAME` | `photoblobs1` | Preserved from the legacy deployment; consumed by operators, not the SDK. |
+| `AZURE_STORAGE_ACCOUNT_KEY` | *(placeholder)* | Same — present for operational parity. |
+| `AZURE_STORAGE_CONTAINER` | `photos` | Container the service creates on startup if absent. |
+
+> Only `AZURE_STORAGE_CONNECTION_STRING` and `AZURE_STORAGE_CONTAINER` are required
+> for the client to function. The connection string contains the account name and
+> key; the two standalone fields are kept for operators who already wire them into
+> their deployment pipeline.
+
+## Google Cloud Storage
+
+Active when `STORAGE_PROVIDER=gcp`.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GCP_PROJECT_ID` | *(empty)* | Optional; passes through to `StorageOptions.setProjectId`. |
+| `GCP_STORAGE_BUCKET` | *(empty)* | **Required.** Target bucket for uploads and signed URLs. |
+
+Credentials come from Application Default Credentials — set
+`GOOGLE_APPLICATION_CREDENTIALS` to a service-account JSON file or run inside an
+environment with workload identity. Signed URLs are V4.
+
+## Oracle Cloud Infrastructure Object Storage
+
+Active when `STORAGE_PROVIDER=oci`.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OCI_OBJECT_STORAGE_NAMESPACE` | *(empty)* | **Required.** Object Storage namespace. |
+| `OCI_OBJECT_STORAGE_BUCKET` | *(empty)* | **Required.** Bucket name. |
+| `OCI_REGION` | *(empty)* | OCI region ID (e.g. `us-ashburn-1`). Used if `OCI_OBJECT_STORAGE_ENDPOINT` is not set. |
+| `OCI_CONFIG_FILE` | *(empty)* | Path to an OCI config file. If empty, the SDK uses its default location (`~/.oci/config`). |
+| `OCI_PROFILE` | `DEFAULT` | Profile within the config file. |
+| `OCI_OBJECT_STORAGE_ENDPOINT` | *(empty)* | Explicit endpoint URL; overrides `OCI_REGION` if both are set. |
+
+Upload targets are created via Pre-Authenticated Request (PAR) with
+`ObjectWrite` access; see `OciObjectStorageService.createSignedUploadTarget`.
+
+## Application
+
+These live under the `app.*` YAML prefix and are bound to
+[`AppProperties`](../src/main/java/com/intelligenta/socialgraph/config/AppProperties.java).
+
+| YAML path | Default | Purpose |
+|-----------|---------|---------|
+| `app.security.token-expiration-seconds` | `86400` | TTL (seconds) for every issued Bearer token. Applied to the `tokens:<token>` Redis key at write time. |
+| `app.public-endpoints` | `[/api/login, /api/register, /api/ping, /api/session, /api/activate]` | Reference list of public endpoints. `SecurityConfig` does **not** read this list at runtime — it hardcodes the same set in the filter chain. The YAML list is present for documentation and future refactoring. |
+
+## Logging
+
+```yaml
+logging:
+  level:
+    root: INFO
+    org.springframework.security: DEBUG
+```
+
+- `com.intelligenta.socialgraph` to get application debug logs.
+- Spring Security debug logging is verbose and intentional — turn it off in
+  production.
+
+## Modifying config
+
+Three ways to set any value:
+
+1. **Environment variables** — highest priority for the names listed above. Best
+   for container deployments.
+2. **`application.yml`** — defaults committed to the repo.
+3. **Spring Boot property overrides** on the command line, e.g.
+   `./mvnw spring-boot:run -Dspring-boot.run.arguments="--server.port=8080"`.
+
+Any Spring Boot property (`server.port`, `logging.level.*`, etc.) works via the
+standard Boot precedence rules.
+
+
+================================================================================
+FILE: docs/architecture.md
+================================================================================
+
+# Architecture
+
+SocialGraph is a small, Redis-first Spring Boot service. It has no database other
+than Redis and no dependency on a message broker. Media objects live in a
+single pluggable object store.
+
+## Runtime shape
+
+```mermaid
+flowchart LR
+    Client[Client]
+
+    subgraph SocialGraph
+        direction TB
+        TAF[TokenAuthenticationFilter]
+        Controllers[Controllers<br/>Auth, User, Action, Status, Timeline, Storage]
+        Services[Services<br/>User, Session, Share, Timeline, Action, Device]
+        Storage[Storage services<br/>Azure / GCP / OCI]
+        Handler[GlobalExceptionHandler]
+    end
+
+    Redis[(Redis)]
+    Blob[(Object store<br/>Azure / GCP / OCI)]
+
+    Client -->|HTTPS + Bearer token| TAF
+    TAF -->|principal set| Controllers
+    Controllers --> Services
+    Services --> Redis
+    Services --> Storage
+    Storage --> Blob
+    Controllers -.-> Handler
+    Services -.->|throws| Handler
+    Handler -->|ErrorResponse JSON| Client
+```
+
+## Layers
+
+- **`controller/`** — thin HTTP adapters. No business logic. Each controller binds
+  query / body / path parameters and delegates to one or more services.
+- **`service/`** — business logic. `UserService` and `ShareService` own the bulk of
+  the write path; `TimelineService` and `ActionService` dominate the read path.
+  All services talk to Redis through `StringRedisTemplate`.
+- **`service/storage/`** — object storage abstraction. `ObjectStorageService` has
+  three implementations, each activated by `@ConditionalOnProperty` on
+  `storage.provider`. Only one is a Spring bean at a time.
+- **`security/`** — `TokenAuthenticationFilter` is a `OncePerRequestFilter` that
+  reads `Authorization: Bearer ...`, resolves the token to a UID via Redis, loads
+  the username, and installs an `AuthenticatedUser` principal in the
+  `SecurityContext`.
+- **`exception/`** — typed exceptions (`UserNotFoundException`,
+  `AlreadyFollowingException`, etc.) each carry a stable error code.
+  `GlobalExceptionHandler` maps them to `ErrorResponse` + HTTP status. See
+  [API errors](api/errors.md).
+- **`model/`** — DTOs and records. Records are used for immutable request/response
+  types (`LqUploadRequest`, `LqUploadResponse`, `StoredObject`,
+  `StorageUploadTarget`). Legacy mutable POJOs (`AuthResponse`, `TimelineEntry`,
+  etc.) are retained where Jackson property names needed stability across the
+  migration.
+- **`util/`** — `Util` (UUID, MD5, unixtime) and `ImagePayloads` (MIME detection).
+- **Root package** — `SocialGraphApplication` entrypoint, `Verbs` enum, and the
+  two math-heavy legacy classes (`LiquidRescaler`, `PasswordHash`, `BigHex`,
+  `EdgeScore`) that escaped the package move.
+
+## Request lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant F as TokenAuthenticationFilter
+    participant R as Redis
+    participant Ctl as Controller
+    participant S as Service
+    participant GEH as GlobalExceptionHandler
+
+    C->>F: GET /api/timeline (Bearer token)
+    F->>R: GET tokens:<token>
+    R-->>F: uid
+    F->>R: HGET user:uid <uid>
+    R-->>F: username
+    F->>R: HINCRBY user:<username> polyCount 1
+    F->>Ctl: authenticated request
+    Ctl->>S: TimelineService.getFifoTimeline(uid, idx, count)
+    S->>R: LRANGE user:<uid>:timeline
+    R-->>S: [postIds]
+    loop each post
+        S->>R: HGETALL post:<postId>
+    end
+    S-->>Ctl: TimelineResponse
+    Ctl-->>C: 200 OK JSON
+    Note over GEH: On any thrown exception
+    S--xGEH: typed exception
+    GEH-->>C: ErrorResponse (400/401/403/500)
+```
+
+## Write path: posting a status
+
+`POST /api/status` is the clearest illustration of how the service fans state out
+to every follower's timeline in a single call.
+
+```mermaid
+flowchart TD
+    A["POST /api/status<br/>type=photo"] --> B[StatusController.postStatus]
+    B --> C[ShareService.sharePhoto]
+    C --> D{bytes or url?}
+    D -->|bytes| E[ImagePayloads.fromBytes]
+    E --> F[ObjectStorageService.upload]
+    F --> G[StoredObject<br/>with objectUrl]
+    D -->|url| H[use url directly]
+    G --> I[createStatusUpdate]
+    H --> I
+    I --> J["MULTI:<br/>HSET post:id<br/>LPUSH author timeline<br/>HINCRBY photos counter"]
+    J --> K[EXEC]
+    K --> L[pushGraph fan-out]
+    L --> M{for each follower}
+    M --> N{canViewContent?<br/>hasMuted?<br/>negativeKeyword?<br/>imageBlocked?}
+    N -->|yes| O["addPostToTimeline:<br/>LPUSH follower :timeline<br/>ZADD personal importance<br/>ZADD everyone importance"]
+    N -->|no| P[skip]
+```
+
+Details in [Timeline delivery](internals/timeline-delivery.md).
+
+## Read path: timelines
+
+Three timeline views share the same underlying delivery:
+
+- **FIFO** (`GET /api/timeline`) — `LRANGE user:<uid>:timeline` in order.
+- **Personal importance** (`GET /api/timeline/personal`) —
+  `ZREVRANGE user:<uid>:timeline:personal:importance` by personal edge score
+  (stored at write time, based on the author→recipient relationship).
+- **Everyone importance** (`GET /api/timeline/everyone`) —
+  `ZREVRANGE user:<uid>:timeline:everyone:importance` by the author's global social
+  importance score.
+
+All three rehydrate post bodies with the same
+[`TimelineService.generatePost`](../src/main/java/com/intelligenta/socialgraph/service/TimelineService.java)
+helper, which re-applies view-time filters (block, mute, negative keyword, image
+block) so newly installed filters immediately affect existing timelines.
+
+## Deployment model
+
+- **Single JAR**, stateless, talks to one Redis and one object store.
+- **Horizontally scalable** — no per-instance state; add more instances behind a
+  load balancer. Tokens, sessions, and counters all live in Redis, so any instance
+  can serve any request.
+- **Redis is a hard dependency.** Lose Redis and you lose auth, posts, timelines,
+  and counters.
+- **The object store is a soft dependency for reads**, a hard one for writes.
+  Timeline reads pull post metadata from Redis and reference `objectUrl` strings
+  that point into the object store; they never read the bytes back. Writes that
+  require upload (photos, liquid-rescale) fail with `storage_unavailable` or
+  `media_upload_failed` if the store is unreachable.
+
+## What isn't in this architecture
+
+- No relational database. If one is added later, the Redis keys become a
+  write-through cache and the schema in
+  [Redis internals](internals/redis-schema.md) needs migration plans.
+- No background workers. All work happens on the request thread, including the
+  `pushGraph` fan-out. Large follower counts will stretch `POST /api/status`
+  latency linearly with follower count.
+- No external cache. Redis is the cache.
+- No service mesh / RPC layer. Everything is a plain in-process service call.
+
+
+================================================================================
+FILE: docs/authentication.md
+================================================================================
+
+# Authentication
+
+SocialGraph uses stateless Bearer tokens that live in Redis. There is no session
+cookie, no JWT, no refresh token, and no OAuth server — a token is an opaque
+string (UUID) that maps to a UID for as long as it stays in Redis.
+
+## Token lifecycle
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as AuthController
+    participant U as UserService
+    participant R as Redis
+
+    Note over C,A: Registration
+    C->>A: POST /api/register (username, password, email)
+    A->>U: register(...)
+    U->>R: HMSET user:<username>, HSET user:uid, SET tokens:<new>
+    U->>R: EXPIRE tokens:<new> 86400
+    U-->>A: AuthResponse(token, uid, activation_token, ...)
+    A-->>C: 200 OK
+
+    Note over C,A: Login
+    C->>A: POST /api/login (username, password)
+    A->>U: login(...)
+    U->>R: HMGET user:<username> passwordHash salt poly
+    U->>U: argon2 verify(salt+password, hash)
+    U->>R: SET tokens:<new>, EXPIRE 86400
+    U-->>A: AuthResponse(token, uid, ...)
+    A-->>C: 200 OK
+
+    Note over C: Subsequent requests
+    C->>A: GET /api/... (Authorization: Bearer <token>)
+    Note over A: TokenAuthenticationFilter runs<br/>before the controller
+```
+
+## Filter chain
+
+All incoming requests pass through
+[`TokenAuthenticationFilter`](../src/main/java/com/intelligenta/socialgraph/security/TokenAuthenticationFilter.java),
+a `OncePerRequestFilter` registered by `SecurityConfig` **before**
+`UsernamePasswordAuthenticationFilter`.
+
+Per request, the filter:
+
+1. Reads the `Authorization` header.
+2. Strips the `Bearer ` prefix.
+3. `GET tokens:<token>` in Redis. If present, the value is the UID.
+4. `HGET user:uid <uid>` to resolve the username.
+5. Constructs `AuthenticatedUser(uid, username)` and installs it in
+   `SecurityContextHolder` as the principal of a
+   `UsernamePasswordAuthenticationToken`.
+6. **Side effect**: `HINCRBY user:<username> polyCount 1` bumps a per-user request
+   counter. This is the sole reason the filter touches the user hash.
+
+If any step fails, the filter leaves the `SecurityContext` empty and calls
+`filterChain.doFilter` anyway — downstream routes that require authentication will
+then get a 401 from Spring Security because the principal is missing.
+
+## Public vs. authenticated endpoints
+
+`SecurityConfig.filterChain` hardcodes the public allowlist:
+
+```java
+.requestMatchers(
+    "/api/login",
+    "/api/register",
+    "/api/ping",
+    "/api/session",
+    "/api/activate"
+).permitAll()
+.anyRequest().authenticated()
+```
+
+| Endpoint | Why it is public |
+|----------|------------------|
+| `/api/ping` | Health check. |
+| `/api/session` | RSA key-exchange bootstrap. Clients hit it before they have a token. |
+| `/api/login` | Needs to accept credentials to mint a token. |
+| `/api/register` | Needs to accept credentials to create an account. |
+| `/api/activate` | Activation links in emails must be followable without logging in. |
+
+Everything else — 35 endpoints — requires `Authorization: Bearer <token>`.
+
+> **Note.** `AppProperties.publicEndpoints` mirrors this list under `app.public-endpoints`
+> in `application.yml`, but `SecurityConfig` does **not** read that list at runtime.
+> Editing the YAML does not change which routes are public. Update both the YAML
+> and `SecurityConfig.filterChain` together.
+
+## AuthenticatedUser
+
+[`AuthenticatedUser`](../src/main/java/com/intelligenta/socialgraph/security/AuthenticatedUser.java)
+implements Spring Security's `UserDetails`. It carries only `uid` and `username`;
+it has no authorities (`getAuthorities()` returns an empty collection).
+
+Controllers access it via
+`@AuthenticationPrincipal AuthenticatedUser user`:
+
+```java
+@GetMapping("/me")
+public ResponseEntity<Map<String, Object>> getMe(
+        @AuthenticationPrincipal AuthenticatedUser user) {
+    return ResponseEntity.ok(userService.getProfile(user.getUid(), user.getUid()));
+}
+```
+
+In tests, the principal is injected by
+[`TestAuthenticatedUserResolver`](../src/test/java/com/intelligenta/socialgraph/support/TestAuthenticatedUserResolver.java)
+rather than the filter — see [Testing](testing.md).
+
+## Token storage
+
+| Redis key | Type | Value | TTL |
+|-----------|------|-------|-----|
+| `tokens:<token>` | string | `uid` | `app.security.token-expiration-seconds` (default 86400) |
+
+Tokens are plain UUIDs generated by `Util.UUID()`. They are not signed, not
+encrypted, and carry no embedded claims. Revocation is `DEL tokens:<token>` — the
+code does not currently implement a logout endpoint, so revocation is manual at
+the Redis level.
+
+Because tokens are opaque, the only way to identify a user is via the Redis
+lookup. This is fine at small to medium scale; at large scale the per-request
+`GET tokens:<token>` + `HGET user:uid <uid>` round-trip becomes the hot path and is
+the obvious first place to add a local LRU cache.
+
+## Session bootstrap (`/api/session`)
+
+Distinct from the Bearer token. `/api/session` is a separate key-exchange
+endpoint preserved from the legacy design:
+
+- `GET /api/session?uuid=<optional-client-uuid>` returns a server RSA public key.
+- The private key is stored at `session:<uuid>` with a 1-day TTL.
+- Clients use the returned `pubKey` to wrap sensitive payloads.
+
+This endpoint is the **only** legacy crypto helper that survived the migration.
+The advanced-auth routes (`/api/aes/key`, `/api/get/image`, etc.) were intentionally
+dropped — see [the changelog](../CHANGELOG.md) and
+[`ApiSurfaceRegressionTest`](../src/test/java/com/intelligenta/socialgraph/ApiSurfaceRegressionTest.java)
+for the enforcement.
+
+## Password hashing
+
+[`PasswordHash`](../src/main/java/com/intelligenta/socialgraph/PasswordHash.java)
+exposes two hash families:
+
+- **Argon2** — `createArgon2Hash` / `validateArgon2Hash`. This is what
+  `UserService.register` and `UserService.login` call today. Argon2 parameters:
+  `iterations=3`, `memory=65536`, `parallelism=4`.
+- **PBKDF2** (legacy, `createHash` / `validatePassword`) — retained for
+  compatibility with pre-migration hashes. The code path is not reached during
+  registration; new accounts always use Argon2.
+
+A user-provided password is salted before hashing: `argon2(salt + password)`. The
+salt is generated by `PasswordHash.createSalt()` and stored alongside the hash in
+the user's Redis hash at field `salt`.
+
+## Related pages
+
+- [Configuration](configuration.md) — how to change the token TTL and where
+  public endpoints are listed.
+- [API: auth](api/auth.md) — request / response shapes for each auth endpoint.
+- [Internals: security filter](internals/security-filter.md) — filter internals
+  and Redis lookup details.
+
+
+================================================================================
+FILE: docs/api/README.md
+================================================================================
+
+# API reference
+
+SocialGraph exposes 51 HTTP endpoints, all mounted under `/api`. This index lists
+every endpoint by controller; each per-controller page documents exact
+request / response shapes, auth requirements, and error cases.
+
+Base URL in development: `http://localhost:4567`.
+
+## By controller
+
+| Controller | Page | Endpoints |
+|------------|------|-----------|
+| Auth | [auth.md](auth.md) | `/api/login`, `/api/register`, `/api/activate`, `/api/session`, `/api/ping` |
+| User & graph | [users.md](users.md) | follow / unfollow / block / mute / profile / search / member lists / RSA public key |
+| Actions | [actions.md](actions.md) | like, love, fav, share (get / do / undo) |
+| Status | [status.md](status.md) | post / read / reply / reshare / edit / delete, content filters, device list |
+| Timeline | [timeline.md](timeline.md) | FIFO, personal, everyone |
+| Storage | [storage.md](storage.md) | signed upload target, liquid-rescale upload |
+
+## Full endpoint list
+
+Public (no auth):
+
+- `GET  /api/ping`
+- `GET  /api/session`
+- `POST /api/login`
+- `POST /api/register`
+- `GET  /api/activate`
+
+Authenticated (`Authorization: Bearer <token>` required):
+
+- `GET  /api/me`
+- `PATCH /api/me`
+- `GET  /api/users/{uid}`
+- `GET  /api/users/search`
+- `GET  /api/me/rsa/public/key`
+- `GET  /api/rsa/public/key`
+- `POST /api/follow`
+- `POST /api/unfollow`
+- `GET  /api/followers`
+- `GET  /api/following`
+- `GET  /api/friends`
+- `POST /api/block`
+- `POST /api/unblock`
+- `GET  /api/blocked`
+- `GET  /api/blockers`
+- `POST /api/mute`
+- `POST /api/unmute`
+- `GET  /api/muted`
+- `GET  /api/muters`
+- `GET  /api/likes`
+- `POST /api/like`
+- `POST /api/unlike`
+- `GET  /api/loves`
+- `POST /api/love`
+- `POST /api/unlove`
+- `GET  /api/faves`
+- `POST /api/fav`
+- `POST /api/unfav`
+- `GET  /api/shares`
+- `POST /api/share`
+- `POST /api/unshare`
+- `POST /api/status`
+- `GET  /api/posts/{postId}`
+- `PATCH /api/posts/{postId}`
+- `DELETE /api/posts/{postId}`
+- `GET  /api/posts/{postId}/replies`
+- `POST /api/posts/{postId}/reply`
+- `POST /api/posts/{postId}/reshare`
+- `GET  /api/devices/registered`
+- `POST /api/add/keyword/negative`
+- `POST /api/add/image/block`
+- `POST /api/request/storage/key`
+- `POST /api/lq/upload`
+- `GET  /api/timeline`
+- `GET  /api/timeline/personal`
+- `GET  /api/timeline/everyone`
+
+## Conventions
+
+- **Method and path.** Each endpoint is documented as `METHOD /api/path`.
+- **Parameters.** Most request data comes via query string (`@RequestParam`). The
+  few endpoints with a JSON body are called out explicitly.
+- **Response shape.** JSON. Field names match the DTO exactly. When a DTO is a
+  `Map<String, ...>` assembled inside the controller, the exact keys are listed
+  per endpoint.
+- **Auth.** Every non-public endpoint requires `Authorization: Bearer <token>`.
+- **Errors.** All errors are normalized to
+  `{ "error": "<code>", "error_description": "<message>" }` by
+  [`GlobalExceptionHandler`](../../src/main/java/com/intelligenta/socialgraph/exception/GlobalExceptionHandler.java).
+  See [errors.md](errors.md) for the full mapping.
+- **Timings.** Most list responses include a `duration` field with the server-side
+  processing time in milliseconds. Do not use this for SLA reporting — it only
+  covers the service method, not network, parsing, or filter time.
+
+## Data types used throughout
+
+- `AuthResponse` — `{username, token, uid, expires_in, followers, following, activation_token?}`
+- `MemberInfo` — `{uid, username, fullname}`
+- `MembersResponse` — `{setType, members: MemberInfo[], count, duration}`
+- `TimelineEntry` — `{uuid, type, content?, url?, created, updated?, parentUuid?, sharedPostUuid?, actorUid, actorUsername, actorFullname}`
+- `TimelineResponse` — `{entities: TimelineEntry[], count, duration}`
+- `ActionActor` — `{"@type": "person", uuid, username, displayName}`
+- `ActionResponse` — `{actionType, object, actors: ActionActor[], count, duration}`
+- `StorageUploadTarget` — `{provider, objectKey, objectUrl, uploadUrl, method: "PUT", headers, expiresIn}`
+- `StoredObject` — `{provider, objectKey, objectUrl, contentType}`
+- `ErrorResponse` — `{error, error_description}`
+
+Full source definitions live in
+[`src/main/java/com/intelligenta/socialgraph/model/`](../../src/main/java/com/intelligenta/socialgraph/model/).
+
+
+================================================================================
+FILE: docs/api/auth.md
+================================================================================
+
+# API: auth
+
+[`AuthController`](../../src/main/java/com/intelligenta/socialgraph/controller/AuthController.java)
+owns account creation, credential exchange, account activation, session key
+bootstrap, and the health-check ping. All five routes are public — they do not
+require an `Authorization` header.
+
+## `GET /api/ping`
+
+Liveness check.
+
+- **Auth:** public.
+- **Params:** none.
+- **Response:** `200 OK`, text body `hello`.
+
+```bash
+curl http://localhost:4567/api/ping
+# hello
+```
+
+## `GET /api/session`
+
+Fetches (or creates) a server RSA public key for a client-provided session UUID.
+This is the legacy key-exchange bootstrap; it is the only advanced-auth helper
+that survived the Spring Boot migration.
+
+- **Auth:** public.
+- **Params (query):**
+  - `uuid` — optional. If omitted, the server generates one.
+- **Response:** `200 OK`
+  ```json
+  {
+    "uuid": "b8c4...-...",
+    "response": { "pubKey": "MIIBIjANBgkqhki..." }
+  }
+  ```
+  The `pubKey` is Base64-encoded X.509-format RSA public key (2048-bit). When the
+  session is re-fetched with an existing UUID the stored keys are not re-issued;
+  `response` comes back empty.
+- **TTL:** the server stores the keypair at `session:<uuid>` with a 1-day expiry.
+
+```bash
+curl "http://localhost:4567/api/session?uuid=$(uuidgen)"
+```
+
+## `POST /api/login`
+
+Authenticates an existing account and returns a fresh Bearer token.
+
+- **Auth:** public.
+- **Params (query or form):**
+  - `username` — required
+  - `password` — required
+- **Response:** `200 OK`, `AuthResponse`:
+  ```json
+  {
+    "username": "alice",
+    "token": "2bf4e3d0-...-...",
+    "uid":   "89b19e58-...-...",
+    "expires_in": 86400,
+    "followers": "0",
+    "following": "0"
+  }
+  ```
+- **Errors:**
+  - `401 Unauthorized` — `invalid_grant` — username does not exist or password
+    does not match.
+
+```bash
+curl -X POST "http://localhost:4567/api/login?username=alice&password=hunter2"
+```
+
+## `POST /api/register`
+
+Creates a new account and returns both a Bearer token and an activation token.
+
+- **Auth:** public.
+- **Params (query or form):**
+  - `username` — required, must be unique.
+  - `password` — required, hashed with Argon2 (`iterations=3, memory=65536, parallelism=4`) after salting.
+  - `email` — required.
+- **Response:** `200 OK`, `AuthResponse` plus activation token:
+  ```json
+  {
+    "username": "alice",
+    "token": "2bf4e3d0-...-...",
+    "uid":   "89b19e58-...-...",
+    "expires_in": 86400,
+    "followers": "0",
+    "following": "0",
+    "activation_token": "f0a2b1d4-...-..."
+  }
+  ```
+  The `activation_token` is the value passed to `GET /api/activate`. The current
+  code does not send an email — email delivery is a TODO — so the client
+  receives the token inline for now.
+- **Errors:**
+  - `400 Bad Request` — `cannot_register` — the username already exists.
+  - `400 Bad Request` — `incomplete_request` — a required parameter is missing.
+
+```bash
+curl -X POST \
+  "http://localhost:4567/api/register?username=alice&password=hunter2&email=alice@example.com"
+```
+
+## `GET /api/activate`
+
+Activates an account previously created by `/api/register`.
+
+- **Auth:** public.
+- **Params (query):**
+  - `token` — required. The `activation_token` value returned by `/api/register`.
+- **Response:** `200 OK`
+  ```json
+  { "username": "alice", "uid": "89b19e58-...", "activated": "true" }
+  ```
+- **Errors:**
+  - `400 Bad Request` with body `{ "activated": "false" }` — the token did not
+    map to a known account. Note: this particular endpoint returns a
+    `Map<String, String>` body, not the usual `ErrorResponse`.
+
+```bash
+curl "http://localhost:4567/api/activate?token=$ACTIVATION_TOKEN"
+```
+
+## Related
+
+- Token storage and filter chain: [Authentication](../authentication.md).
+- Error code / status mapping: [errors.md](errors.md).
+- Regression surface: `ApiSurfaceRegressionTest` requires all five of these paths
+  to exist.
+
+
+================================================================================
+FILE: docs/api/users.md
+================================================================================
+
+# API: users and graph
+
+[`UserController`](../../src/main/java/com/intelligenta/socialgraph/controller/UserController.java)
+covers follow / unfollow, block / mute, member-list retrieval, profile read /
+update, search, and RSA public key lookup. Every endpoint on this page requires
+`Authorization: Bearer <token>` unless otherwise noted.
+
+## Profile
+
+### `GET /api/me`
+
+Returns the authenticated user's profile.
+
+- **Params:** none.
+- **Response:** `200 OK`
+  ```json
+  {
+    "uid": "...",
+    "username": "alice",
+    "fullname": "Alice Smith",
+    "bio": "the ceo",
+    "profilePicture": "https://.../alice.jpg",
+    "created": "1717171717",
+    "followers": "12",
+    "following": "34",
+    "isBlocked": false,
+    "isMuted": false,
+    "blocksViewer": false
+  }
+  ```
+  The `isBlocked`, `isMuted`, and `blocksViewer` flags are always the self-view
+  values on this endpoint (viewer == target).
+
+### `PATCH /api/me`
+
+Partially updates the authenticated user's profile.
+
+- **Params (query or form, all optional):**
+  - `fullname`
+  - `bio`
+  - `profilePicture`
+- **Response:** `200 OK`, the updated profile (same shape as `GET /api/me`).
+- Only fields that are passed in are updated; others are left unchanged.
+
+### `GET /api/users/{uid}`
+
+Fetches another user's profile as seen by the authenticated user.
+
+- **Path:**
+  - `uid` — the target user UID.
+- **Response:** `200 OK`, same shape as `GET /api/me`. `isBlocked`, `isMuted`, and
+  `blocksViewer` are computed against the authenticated viewer.
+- **Errors:** `400 user_not_found` — `uid` has no user record.
+
+### `GET /api/users/search`
+
+Paginated prefix / substring search across usernames and full names.
+
+- **Params (query):**
+  - `q` — required. Case-insensitive substring search.
+  - `index` — required. Zero-based offset.
+  - `count` — required. Page size.
+- **Response:** `200 OK`, `MembersResponse`:
+  ```json
+  { "setType": "search", "members": [...], "count": 3, "duration": 4 }
+  ```
+  The search iterates the full `user:uid` hash and filters in-process. Fine at
+  small scale; for larger user sets replace with a proper index.
+
+## Follow graph
+
+### `POST /api/follow`
+
+Follows another user.
+
+- **Params (query, at least one of):**
+  - `uid` — target UID, preferred.
+  - `username` — target username. If `uid` is absent, the service resolves
+    username → UID via `user:<username>.uuid`.
+- **Response:** `200 OK`
+  ```json
+  {
+    "success": "true",
+    "following.UID": "<target-uid>",
+    "following.Username": "<target-username>"
+  }
+  ```
+- **Errors:**
+  - `400 user_not_found` — target does not exist.
+  - `400 cannot_follow` (`CannotFollowSelfException`) — trying to follow yourself.
+  - `400 cannot_follow` (`AlreadyFollowingException`) — already following the target.
+
+### `POST /api/unfollow`
+
+Unfollows a user.
+
+- **Params (query):**
+  - `uid` — required. Target UID.
+- **Response:** `200 OK`
+  ```json
+  { "success": "<uid>", "unfollowed": "<uid>" }
+  ```
+- **Errors:**
+  - `400 cannot_follow` — `uid` equals the authenticated UID.
+  - `400 cannot_unfollow` — not currently following the target.
+
+### `GET /api/followers`
+### `GET /api/following`
+### `GET /api/friends`
+
+Return the authenticated user's followers, followees, or mutual friends.
+
+- **Params:** none.
+- **Response:** `200 OK`, `MembersResponse`:
+  ```json
+  {
+    "setType": "followers",
+    "members": [ { "uid": "...", "username": "...", "fullname": "..." } ],
+    "count": 1,
+    "duration": 3
+  }
+  ```
+  `friends` is computed as `followers ∩ following` at request time.
+
+## Block and mute
+
+The block and mute endpoints share a response shape:
+
+```json
+{ "uid": "<target-uid>", "action": "blocked|unblocked|muted|unmuted", "changed": "true|false" }
+```
+
+`changed` is `"false"` when the state was already the requested value (idempotent
+no-op). A block additionally removes any existing follow relationship in both
+directions and decrements the corresponding counters.
+
+### `POST /api/block` / `POST /api/unblock`
+
+- **Params:** `uid` (required).
+- **Response:** see shape above, with `action` set to `blocked` or `unblocked`.
+- **Errors:** `user_not_found`, `cannot_follow` (if `uid` equals authenticated UID).
+
+### `POST /api/mute` / `POST /api/unmute`
+
+- **Params:** `uid` (required).
+- **Response:** same shape, `action` is `muted` or `unmuted`.
+
+### `GET /api/blocked`
+### `GET /api/blockers`
+### `GET /api/muted`
+### `GET /api/muters`
+
+Return the authenticated user's block list, the users who have blocked them, the
+mute list, and the users who have muted them. Each is a `MembersResponse` with
+`setType` matching the path suffix.
+
+## RSA public keys
+
+### `GET /api/me/rsa/public/key`
+
+Returns the authenticated user's RSA public key (stored at
+`user:<uid>:crypto.publicKey`).
+
+- **Params:** none.
+- **Response:** `200 OK`, plain-text body (the Base64 key string). Empty string
+  if no key is registered.
+
+### `GET /api/rsa/public/key`
+
+Returns another user's RSA public key.
+
+- **Params (query):**
+  - `uid` — optional. If omitted, behaves like `/api/me/rsa/public/key`.
+- **Response:** `200 OK`, plain-text body.
+
+## Related
+
+- [Authentication](../authentication.md) for `Authorization` header details.
+- [Redis schema](../internals/redis-schema.md) for the underlying key layout
+  (`user:<uid>:followers`, `user:<uid>:blocked`, `user:uid`, etc.).
+- [errors.md](errors.md) for the full error-code table.
+
+
+================================================================================
+FILE: docs/api/actions.md
+================================================================================
+
+# API: actions
+
+[`ActionController`](../../src/main/java/com/intelligenta/socialgraph/controller/ActionController.java)
+covers reactions on posts: **like**, **love**, **fav**, and **share**. The four
+verbs share a common shape — one `GET /api/<plural>` to list actors, one
+`POST /api/<verb>` to perform the action, and one `POST /api/un<verb>` to
+reverse it.
+
+The verbs are defined in
+[`Verbs.Action`](../../src/main/java/com/intelligenta/socialgraph/Verbs.java).
+`HUG` exists in the enum but is **not exposed** by this controller — adding it
+would require new routes.
+
+> **Note on the `share` verb.** `ActionController`'s `POST /api/share` records a
+> *reaction* on a post (a share action) and is distinct from the reshare flow on
+> `POST /api/posts/{postId}/reshare` documented in
+> [status.md](status.md), which actually creates a new post of type `reshare`.
+> They affect different Redis keys.
+
+## Shared response shapes
+
+**Action responses** (POST /api/like, POST /api/unlike, etc.):
+
+```json
+{ "result": "Liked Post: <postId>" }
+```
+
+Exact strings:
+
+| Verb | Perform → | Reverse → |
+|------|-----------|-----------|
+| like | `Liked Post: <id>` or `Already liked Post: <id>` | `Unliked Post: <id>` or `Cannot unlike, not like: <id>` |
+| love | `Loved Post: <id>` / `Already loved Post: <id>` | `Unloved Post: <id>` / `Cannot unlove, not love: <id>` |
+| fav  | `Faved Post: <id>` / `Already faved Post: <id>` | `Unfaved Post: <id>` / `Cannot unfav, not fav: <id>` |
+| share | `Shared Post: <id>` / `Already shared Post: <id>` | `Unshared Post: <id>` / `Cannot unshare, not share: <id>` |
+
+**Action list responses** (GET /api/likes, GET /api/loves, etc.):
+
+```json
+{
+  "actionType": "likes",
+  "object": "<postId>",
+  "actors": [
+    { "@type": "person", "uuid": "...", "username": "alice", "displayName": "Alice Smith" }
+  ],
+  "count": 1,
+  "duration": 2
+}
+```
+
+`actionType` is the plural verb form — `likes`, `loves`, `favs`, `shares`.
+
+## Likes
+
+### `GET /api/likes`
+
+- **Params (query):**
+  - `uuid` — required. Post ID.
+  - `index` — required. Zero-based offset.
+  - `count` — required. Page size.
+- **Response:** `200 OK`, `ActionResponse` with `actionType: "likes"`.
+- **Errors:** `400 cannot_perform_action` — post does not exist.
+
+### `POST /api/like`
+
+- **Params:** `uuid` (required). Auth required.
+- **Response:** `200 OK`, `{ "result": "Liked Post: <uuid>" }`.
+- **Idempotent:** repeating the call returns `Already liked Post: <uuid>`.
+
+### `POST /api/unlike`
+
+- **Params:** `uuid` (required). Auth required.
+- **Response:** `200 OK`, `{ "result": "Unliked Post: <uuid>" }` or `Cannot unlike, not like: <uuid>` when the user had not liked it.
+
+## Loves
+
+### `GET /api/loves`
+### `POST /api/love`
+### `POST /api/unlove`
+
+Same shapes as likes, with `actionType: "loves"` and the verb swapped into the
+`result` string.
+
+## Favorites
+
+### `GET /api/faves`
+### `POST /api/fav`
+### `POST /api/unfav`
+
+Same shapes, `actionType: "favs"`, `favs` suffix on Redis keys.
+
+## Shares (reaction)
+
+### `GET /api/shares`
+### `POST /api/share`
+### `POST /api/unshare`
+
+Same shapes, `actionType: "shares"`. Again: this is the *reaction*, not the
+repost flow.
+
+## Backing Redis keys
+
+Each action is stored twice: once as an ordered list of actor UIDs on the post
+(for pagination), and once as a reverse-lookup hash so `containsAction` is O(1).
+
+- `post:<postId>likes:` — list of actor UIDs (note: no colon between `postId`
+  and `likes:`; the key suffix comes from `Verbs.Action.key()` which returns
+  `<plural>:`).
+- `post:<postId>loves:`, `post:<postId>favs:`, `post:<postId>shares:` — same pattern.
+- `post:<postId>:<actorUid>:` — hash with fields `like`, `love`, `fav`, `share`
+  set to `"1"` when the actor has performed that action on the post.
+
+Full schema: [Redis schema](../internals/redis-schema.md).
+
+## Related
+
+- [Status endpoints](status.md) — post creation, reply, reshare (note: reshare
+  creates a new post, unlike the `share` reaction here).
+- [errors.md](errors.md) for error-code mapping.
+
+
+================================================================================
+FILE: docs/api/status.md
+================================================================================
+
+# API: status and posts
+
+[`StatusController`](../../src/main/java/com/intelligenta/socialgraph/controller/StatusController.java)
+owns post creation (text / photo / video), replies, reshares, post edits,
+deletes, device list, and per-user content filters (negative keywords and
+image-hash blocks). Every endpoint on this page is authenticated.
+
+## Posting
+
+### `POST /api/status`
+
+Creates a new post. The payload shape depends on `type`.
+
+- **Params (query):**
+  - `type` — required. One of `text`, `photo`, `video`.
+  - `content` — required for `text`, optional for `photo` and `video`.
+  - `url` — for `video` (required) or `photo` (optional — if present, reused
+    directly; if absent the request body is uploaded to object storage).
+- **Body (photo only):**
+  - When `url` is absent, the raw image bytes go in the HTTP body and are
+    uploaded via the active `ObjectStorageService`. Use the `Content-Type`
+    header to hint MIME; otherwise `ImagePayloads` detects JPEG / PNG / WebP
+    from magic bytes.
+- **Response:** `200 OK`, a post map:
+  ```json
+  {
+    "id": "<postId>",
+    "type": "photo",
+    "uid": "<authorUid>",
+    "created": "1717171717",
+    "content": "caption text",
+    "url": "https://.../photos/abc.jpg",
+    "duration": "12"
+  }
+  ```
+  The response intentionally omits `imageHash` — that value is only stored in
+  Redis and checked against other users' block lists during delivery.
+- **Errors:**
+  - `400 Bad Request` — unknown `type`, blank `content` for text, missing `url`
+    for video, missing both `url` and `body` for photo.
+  - `400 invalid_image_payload` / `unsupported_image_type` — photo upload with
+    bytes the MIME detector rejects.
+
+### `POST /api/status` — behavior matrix
+
+| `type`  | Body                  | Notes |
+|---------|-----------------------|-------|
+| `text`  | ignored               | `content` is required, must not be blank. |
+| `photo` | `url` present         | URL stored as-is; no upload. |
+| `photo` | raw image bytes       | Uploaded via `ObjectStorageService.upload`; MIME detected. |
+| `photo` | neither               | 400. |
+| `video` | `url` required        | URL stored as-is; no upload. |
+
+See [timeline delivery](../internals/timeline-delivery.md) for what happens
+after the post is stored.
+
+## Reading posts
+
+### `GET /api/posts/{postId}`
+
+- **Path:** `postId` — the post UUID.
+- **Response:** `200 OK`, `TimelineEntry`:
+  ```json
+  {
+    "uuid": "...",
+    "type": "photo",
+    "content": "...",
+    "url": "https://...",
+    "created": "1717171717",
+    "actorUid": "...",
+    "actorUsername": "alice",
+    "actorFullname": "Alice Smith"
+  }
+  ```
+- **Errors:**
+  - `400 cannot_perform_action` — post does not exist.
+  - Returns `null` / filtered if the viewer has blocked the author or vice
+    versa, or if a negative-keyword / image-block rule matches.
+
+### `GET /api/posts/{postId}/replies`
+
+Paginated replies.
+
+- **Path:** `postId`.
+- **Params:** `index` (required), `count` (required).
+- **Response:** `200 OK`, `TimelineResponse` with each reply rendered as a
+  `TimelineEntry` and the usual `count` / `duration` fields.
+
+## Mutating posts
+
+### `POST /api/posts/{postId}/reply`
+
+- **Path:** `postId`.
+- **Params:** `content` (required, must not be blank).
+- **Response:** `200 OK`, the new reply post map (same shape as
+  `POST /api/status`, with `type: "reply"` and `parentId: <postId>`).
+- **Side effect:** the new reply ID is pushed onto `post:<postId>:replies`.
+- **Errors:** `400 cannot_perform_action` — parent post does not exist.
+
+### `POST /api/posts/{postId}/reshare`
+
+Creates a new post of `type: "reshare"` that references the original post.
+
+- **Path:** `postId`.
+- **Params:** `content` (optional — a user comment attached to the reshare).
+- **Response:** `200 OK`, the new reshare post map, including
+  `sharedPostId: <postId>`.
+- **Errors:** `400 cannot_perform_action` — original post does not exist.
+
+### `PATCH /api/posts/{postId}`
+
+Edits the `content` of an existing post. Only the original author can edit.
+
+- **Path:** `postId`.
+- **Params:** `content` (required, must not be blank).
+- **Response:** `200 OK`, the full post map with `updated` set to the new
+  Unix timestamp.
+- **Errors:**
+  - `400 cannot_perform_action` — post does not exist.
+  - `403 access_denied` — authenticated user is not the author.
+
+### `DELETE /api/posts/{postId}`
+
+Deletes the post. Only the author can delete.
+
+- **Path:** `postId`.
+- **Response:** `200 OK`
+  ```json
+  { "deleted": "true", "uuid": "<postId>" }
+  ```
+- **Side effect:** `DEL post:<postId>`. The post is not removed from timelines
+  or reaction lists; `TimelineService.generatePost` silently drops any stale
+  references at read time.
+
+## Devices
+
+### `GET /api/devices/registered`
+
+Returns the device IDs registered against the authenticated user. Device
+registration itself is managed by `DeviceService` but is not currently exposed
+through an HTTP route.
+
+- **Params:** `token` (optional, legacy parameter preserved for compatibility;
+  ignored), `index` (required), `count` (required — included for pagination
+  compatibility; the current implementation returns the whole set).
+- **Response:** `200 OK`
+  ```json
+  { "devices": ["<deviceId>", "..."], "count": 2, "duration": 1 }
+  ```
+
+## Content filters
+
+Each user keeps per-user blocklists that apply both at post delivery time
+(`pushGraph`) and at read time (`generatePost`).
+
+### `POST /api/add/keyword/negative`
+
+Adds a negative keyword to the authenticated user's filter list. Any post whose
+content contains that keyword will be filtered out of the user's timeline.
+
+- **Params:** `keyword` (required).
+- **Response:** `200 OK`
+  ```json
+  { "keyword": "spoilers", "added": "true" }
+  ```
+  `added` is `"false"` if the keyword was already present.
+- **Backing store:** `user:<uid>:negative:keywords` hash.
+
+### `POST /api/add/image/block`
+
+Blocks an image by its MD5 hash. Posts carrying the same image hash will be
+filtered out of the user's timeline.
+
+- **Params (query, exactly one of):**
+  - `md5` — the image hash directly.
+  - `postId` — read the hash from an existing post (`post:<postId>.imageHash`,
+    or legacy field `md5`).
+- **Response:** `200 OK`
+  ```json
+  { "imageHash": "<md5>", "added": "true" }
+  ```
+- **Errors:** `400` if neither `md5` nor a resolvable `postId` is supplied.
+- **Backing store:** `user:<uid>:images:blocked:md5` hash.
+
+## Related
+
+- [Timeline endpoints](timeline.md) — where these posts show up.
+- [Internals: timeline delivery](../internals/timeline-delivery.md) — fan-out
+  algorithm.
+- [Internals: image pipeline](../internals/image-pipeline.md) — MIME detection
+  and liquid rescale.
+- [errors.md](errors.md) — error-code mapping.
+
+
+================================================================================
+FILE: docs/api/timeline.md
+================================================================================
+
+# API: timeline
+
+[`TimelineController`](../../src/main/java/com/intelligenta/socialgraph/controller/TimelineController.java)
+exposes three views of the authenticated user's timeline. All three are
+authenticated.
+
+## `GET /api/timeline`
+
+Time-ordered (FIFO) timeline. Returns posts in the order they were delivered to
+the user's timeline list.
+
+- **Params (query):**
+  - `index` — required. Zero-based offset into the list.
+  - `count` — required. Page size.
+- **Response:** `200 OK`, `TimelineResponse`:
+  ```json
+  {
+    "entities": [
+      {
+        "uuid": "<postId>",
+        "type": "photo",
+        "content": "caption",
+        "url": "https://...",
+        "created": "1717171717",
+        "actorUid": "...",
+        "actorUsername": "alice",
+        "actorFullname": "Alice Smith"
+      }
+    ],
+    "count": 1,
+    "duration": 4
+  }
+  ```
+- **Backing store:** `LRANGE user:<uid>:timeline index index+count-1`.
+
+## `GET /api/timeline/personal`
+
+Timeline re-sorted by per-recipient edge score. The score is computed at post
+delivery time from
+`user:<authorUid>:connection:edgescore:<recipientUid>` and stored in the zset
+`user:<uid>:timeline:personal:importance`.
+
+- **Params:** `index`, `count` (required, same semantics as FIFO).
+- **Response:** `TimelineResponse` sorted by score descending.
+- **Backing store:** `ZREVRANGE user:<uid>:timeline:personal:importance ...`.
+
+## `GET /api/timeline/everyone`
+
+Timeline sorted by global social importance of the author. The score comes from
+the `user:social:importance` zset at post delivery time.
+
+- **Params:** `index`, `count` (required).
+- **Response:** `TimelineResponse` sorted by score descending.
+- **Backing store:** `ZREVRANGE user:<uid>:timeline:everyone:importance ...`.
+
+## View-time filtering
+
+All three endpoints hydrate post bodies through
+[`TimelineService.generatePost`](../../src/main/java/com/intelligenta/socialgraph/service/TimelineService.java).
+That method re-applies four filters **per request**, so new block / mute /
+keyword / image-block settings take effect on existing timelines immediately:
+
+1. `canViewContent(viewer, author)` — hides posts if either party has blocked
+   the other.
+2. `hasNegativeKeyword(viewer, words(content))` — hides posts containing any
+   blocked keyword.
+3. `isImageBlocked(viewer, imageHash)` — hides posts whose image MD5 is on the
+   viewer's block list.
+4. Missing posts (`post:<postId>` has been deleted) are silently skipped.
+
+Filtered or missing posts do **not** count against the requested `count` — the
+response just comes back shorter.
+
+## Related
+
+- [Internals: timeline delivery](../internals/timeline-delivery.md) for the
+  `pushGraph` write path that populates these lists and zsets.
+- [Content filters](status.md#content-filters) — how to add negative keywords
+  and image blocks.
+- [Redis schema](../internals/redis-schema.md).
+
+
+================================================================================
+FILE: docs/api/storage.md
+================================================================================
+
+# API: storage
+
+[`StorageController`](../../src/main/java/com/intelligenta/socialgraph/controller/StorageController.java)
+exposes the two media-upload entry points. Both routes are authenticated (they
+fall under the `anyRequest().authenticated()` rule in
+[`SecurityConfig`](../../src/main/java/com/intelligenta/socialgraph/config/SecurityConfig.java)).
+The body of `POST /api/lq/upload` is JSON; everything else in this app is form
+or query parameters.
+
+## `POST /api/request/storage/key`
+
+Returns a provider-neutral signed upload target. The client can then `PUT` the
+bytes directly to the object store without routing them through the app.
+
+- **Params:** none. The controller calls
+  `objectStorageService.createSignedUploadTarget(null, null)`, so it does not
+  know the extension or content type in advance — the resulting URL is a
+  generic upload URL. If you need to pin content type you can ignore this route
+  and upload via `POST /api/status` with `type=photo` and raw bytes instead.
+- **Response:** `200 OK`, `StorageUploadTarget`:
+  ```json
+  {
+    "provider": "azure",
+    "objectKey": "9f4a...-....",
+    "objectUrl": "https://photoblobs.blob.core.windows.net/photos/9f4a...-....",
+    "uploadUrl": "https://photoblobs.blob.core.windows.net/photos/9f4a...-....?sv=...&sig=...",
+    "method": "PUT",
+    "headers": {
+      "x-ms-blob-type": "BlockBlob"
+    },
+    "expiresIn": 300
+  }
+  ```
+- **Provider-specific shape:**
+  - **Azure** — `uploadUrl` is the blob URL with a SAS query string granting
+    create / write / read for `storage.signed-url-ttl-seconds` seconds. Caller
+    must include `x-ms-blob-type: BlockBlob`.
+  - **GCP** — `uploadUrl` is a V4 signed URL scoped to `PUT`. If the caller
+    passed a content type, it is also included in `headers`.
+  - **OCI** — `uploadUrl` resolves to a pre-authenticated request (PAR) with
+    `ObjectWrite` access on the target object.
+- **Errors:** `400 storage_unavailable` if the provider client was not
+  initialized on startup (e.g. missing connection string).
+
+> The `expiresIn` value in the response matches
+> `storage.signed-url-ttl-seconds` from
+> [configuration](../configuration.md#object-storage-shared) (default 300).
+
+## `POST /api/lq/upload`
+
+Uploads a base64-encoded image, seam-carves it to a narrower width (liquid
+rescale), and stores the result in the active object store in one round trip.
+
+- **Body (JSON):**
+  ```json
+  {
+    "imageBase64": "iVBORw0KGgoAAAANSUhEUgAA...",
+    "cut": 100,
+    "mimeType": "image/png"
+  }
+  ```
+  - `imageBase64` — required. Either raw base64 or a `data:image/...;base64,...`
+    URL. `ImagePayloads` parses both.
+  - `cut` — required, positive integer. Number of pixels to shave from the
+    image width. Must be strictly less than the image width.
+  - `mimeType` — optional hint. The detector may override it from the magic
+    bytes; if the detector finds no match and the hint is unsupported, the
+    request fails with `unsupported_image_type`.
+- **Supported MIME types:** `image/jpeg`, `image/png`, `image/webp`. Aliases
+  (`image/jpg`, `image/x-png`, `image/x-webp`) are normalized.
+- **Response:** `200 OK`, `LqUploadResponse`:
+  ```json
+  {
+    "provider": "azure",
+    "objectKey": "9f4a...-....png",
+    "objectUrl": "https://photoblobs.blob.core.windows.net/photos/9f4a...-....png",
+    "mimeType": "image/png"
+  }
+  ```
+- **Errors:**
+  - `400 incomplete_request` — `imageBase64` blank or `cut` missing / non-positive
+    (bean validation from `@NotBlank`, `@NotNull`, `@Positive` on
+    [`LqUploadRequest`](../../src/main/java/com/intelligenta/socialgraph/model/LqUploadRequest.java)).
+  - `400 invalid_image_payload` — base64 is malformed, bytes are empty,
+    `ImageIO` cannot decode, or `cut` is not smaller than the image width.
+  - `400 unsupported_image_type` — MIME type is not JPEG / PNG / WebP.
+  - `400 media_upload_failed` — the object store rejected the upload.
+  - `400 storage_unavailable` — the storage provider was not initialized.
+
+## Storage provider details
+
+The active provider is picked at startup by
+`storage.provider` in `application.yml` (or the `STORAGE_PROVIDER` env var).
+Only one `ObjectStorageService` bean is active at a time — the other two classes
+are skipped by `@ConditionalOnProperty`.
+
+See [Internals: storage providers](../internals/storage-providers.md) for the
+Azure / GCP / OCI implementation notes, and [configuration](../configuration.md)
+for required environment variables per provider.
+
+## Related
+
+- [Image pipeline](../internals/image-pipeline.md) — how `ImagePayloads` and
+  `LiquidRescaler` work together.
+- [errors.md](errors.md) — full error-code table.
+
+
+================================================================================
+FILE: docs/api/errors.md
+================================================================================
+
+# API errors
+
+All errors are normalized to the same JSON shape by
+[`GlobalExceptionHandler`](../../src/main/java/com/intelligenta/socialgraph/exception/GlobalExceptionHandler.java):
+
+```json
+{
+  "error": "<stable_code>",
+  "error_description": "<human message>"
+}
+```
+
+`error` is a stable machine-readable code. `error_description` is a human
+readable message that can vary per occurrence.
+
+## Error code → HTTP status
+
+| Code | HTTP | Typed exception | When |
+|------|------|-----------------|------|
+| `cannot_register` | 400 | `AlreadyRegisteredException` | Registration with a username that already exists. |
+| `invalid_grant` | 401 | `InvalidCredentialsException` | Login with an unknown username or wrong password. |
+| `user_not_found` | 400 | `UserNotFoundException` | Target UID / username does not resolve to a known account. |
+| `cannot_follow` | 400 | `AlreadyFollowingException`, `CannotFollowSelfException` | Follow a user already followed, or any graph action on yourself. |
+| `cannot_unfollow` | 400 | `NotFollowingException` | Unfollow a user not currently followed. |
+| `cannot_perform_action` | 400 | `PostNotFoundException` | Post ID does not exist. |
+| `auth_error` | 401 | `InvalidTokenException`, `AuthenticationException` | Missing or invalid Bearer token on an authenticated route. |
+| `access_denied` | 403 | `AccessDeniedException` | Caller is authenticated but not authorized — e.g. editing someone else's post. |
+| `incomplete_request` | 400 | `MissingServletRequestParameterException`, `MethodArgumentNotValidException` | A required query parameter is missing or bean validation failed. |
+| `invalid_request_body` | 400 | `HttpMessageNotReadableException` | JSON body could not be parsed. |
+| `invalid_image_payload` | 400 | `SocialGraphException` with this code | Image bytes are empty, base64 is malformed, `cut >= width`, or ImageIO cannot decode. |
+| `unsupported_image_type` | 400 | `SocialGraphException` with this code | MIME type is not JPEG / PNG / WebP. |
+| `media_upload_failed` | 400 | `SocialGraphException` with this code | Provider-specific upload error. |
+| `storage_unavailable` | 400 | `SocialGraphException` with this code | Storage provider client is null (not initialized) or the operation could not reach the store. |
+| `session_key_failure` | 400 | `SocialGraphException` with this code | `KeyPairGenerator("RSA")` failed during `/api/session` bootstrap. |
+| `internal_server_error` | 500 | `Exception` (catch-all) | Any unhandled exception. |
+
+Anything thrown as a plain `SocialGraphException` with a custom code falls
+through to the generic `SocialGraphException` handler and comes out as `400`
+with whatever `errorCode` the exception carries.
+
+## Special cases
+
+Two endpoints deliberately break the normalized error shape:
+
+- **`GET /api/activate`** on a bad token returns `400` with body
+  `{ "activated": "false" }` rather than the standard `ErrorResponse`. This is
+  intentional — activation lives in a success-or-not contract independent of the
+  error plumbing.
+- **Spring validation (`@Valid` on `LqUploadRequest`)** produces messages
+  constructed from the first field error:
+  `"imageBase64 must not be blank"`, `"cut must be greater than 0"`, etc.
+  `error` is always `incomplete_request`.
+
+## Example error responses
+
+```json
+// POST /api/register with a taken username
+{ "error": "cannot_register", "error_description": "Username already registered" }
+```
+
+```json
+// POST /api/login with a bad password
+{ "error": "invalid_grant", "error_description": "Invalid username or password" }
+```
+
+```json
+// GET /api/me without a Bearer token
+{ "error": "auth_error", "error_description": "Authentication required" }
+```
+
+```json
+// PATCH /api/posts/{someoneElsePostId}
+{ "error": "access_denied", "error_description": "Access denied" }
+```
+
+```json
+// POST /api/lq/upload with a GIF
+{ "error": "unsupported_image_type", "error_description": "Only JPEG, PNG, and WebP images are supported" }
+```
+
+## Related
+
+- [Authentication](../authentication.md) for how 401s are produced.
+- [API reference index](README.md) for endpoint-by-endpoint error columns.
+- [`GlobalExceptionHandler`](../../src/main/java/com/intelligenta/socialgraph/exception/GlobalExceptionHandler.java)
+  is the authoritative source for this mapping.
+
+
+================================================================================
+FILE: docs/internals/redis-schema.md
+================================================================================
+
+# Redis schema
+
+SocialGraph stores every piece of social state in Redis — users, tokens, posts,
+timelines, reactions, follow graph, block / mute sets, session keypairs,
+counters. This page enumerates every key the application touches and the service
+that owns it.
+
+There are no namespaces or prefixes beyond the per-type keys below. Everything
+lives on one logical Redis database.
+
+## Users and auth
+
+| Key | Type | Fields / contents | Owner |
+|-----|------|-------------------|-------|
+| `user:<username>` | hash | `passwordHash`, `salt`, `poly`, `uuid`, `username`, `email`, `created`, `followers` (counter), `following` (counter), `activated`, `fullname`, `bio`, `profilePicture`, `polyCount` | `UserService`, `TokenAuthenticationFilter` |
+| `user:uid` | hash | field = UID, value = username (reverse lookup) | `UserService`, `TokenAuthenticationFilter` |
+| `user:activations:<activationToken>:uid` | string | UID to activate | `UserService` |
+| `tokens:<token>` | string | UID. TTL = `app.security.token-expiration-seconds` (default 86400) | `UserService`, `TokenAuthenticationFilter` |
+| `user:<uid>:crypto` | hash | `publicKey` (Base64 RSA public key) | `UserService` (read) |
+
+Notes:
+
+- `user:<username>` is keyed by **username**, not UID. The reverse lookup
+  `user:uid` is the cross-index, and is the only way the rest of the service
+  can turn a UID into a profile. Counters are kept on the username hash, so
+  `UserService.incrementCounterForUid` internally resolves UID → username before
+  `HINCRBY`.
+- `polyCount` is bumped on every authenticated request by
+  `TokenAuthenticationFilter` as a coarse per-user request counter.
+- `followers` and `following` fields on the user hash are plain integer counters
+  maintained alongside the follower / following **sets** below. They can diverge
+  if writes are interleaved with restarts; the sets are authoritative.
+
+## Follow graph
+
+| Key | Type | Members | Owner |
+|-----|------|---------|-------|
+| `user:<uid>:followers` | set | UIDs following this user | `UserService.follow/unfollow` |
+| `user:<uid>:following` | set | UIDs this user follows | `UserService.follow/unfollow` |
+| `user:<uid>:blocked` | set | UIDs blocked by this user | `UserService.block/unblock` |
+| `user:<uid>:blockers` | set | UIDs that have blocked this user | `UserService.block/unblock` |
+| `user:<uid>:muted` | set | UIDs muted by this user | `UserService.mute/unmute` |
+| `user:<uid>:muters` | set | UIDs that have muted this user | `UserService.mute/unmute` |
+
+**Friends** are computed on the fly as `followers ∩ following`
+(`UserService.getFriends`) and are not stored.
+
+**Block semantics.** `UserService.block` writes both sides (`A:blocked` += B,
+`B:blockers` += A) and **removes any existing follow in either direction**,
+decrementing both users' counters. `unblock` reverses only the block set membership.
+
+## Posts
+
+| Key | Type | Fields / contents | Owner |
+|-----|------|-------------------|-------|
+| `post:<postId>` | hash | `id`, `type`, `uid` (author UID), `created`, `content`, `url`, `imageHash`, `parentId` (reply), `sharedPostId` (reshare), `updated` (edit), `md5` (legacy alias for `imageHash`) | `ShareService` |
+| `post:<postId>:replies` | list | reply post IDs (newest-first via `LPUSH`) | `ShareService.createStatusUpdate` |
+
+Post types in `type`: `text`, `photo`, `video`, `reply`, `reshare`.
+
+`imageHash` is MD5 of the original uploaded image bytes, used for
+image-block filtering. Legacy posts may carry it under `md5`; both
+`ShareService.readImageHash` and `TimelineService.generatePost` check both field
+names.
+
+## Reactions
+
+Each reaction is stored **twice** — once as an ordered list for pagination, once
+as a reverse-lookup hash for O(1) `containsAction` checks.
+
+| Key | Type | Contents | Owner |
+|-----|------|----------|-------|
+| `post:<postId>likes:` | list | actor UIDs | `ActionService` |
+| `post:<postId>loves:` | list | actor UIDs | `ActionService` |
+| `post:<postId>favs:` | list | actor UIDs | `ActionService` |
+| `post:<postId>shares:` | list | actor UIDs | `ActionService` |
+| `post:<postId>:<actorUid>:` | hash | `like`, `love`, `fav`, `share` → `"1"` | `ActionService` |
+
+> **The list keys have no colon between the post ID and the suffix.**
+> The suffix comes from `Verbs.Action.key()` which returns `"<plural>:"`. Concatenated
+> against `"post:<postId>"` the result is `"post:<id>likes:"`. This is unusual
+> but is the shape the `ApiSurfaceRegressionTest` + `ActionControllerTest` suite
+> relies on — **do not** "fix" it to `post:<id>:likes` without a migration plan.
+
+## Timelines
+
+Each follower gets three redundant views written at delivery time:
+
+| Key | Type | Contents | Order |
+|-----|------|----------|-------|
+| `user:<uid>:timeline` | list | post IDs | newest-first (`LPUSH`) |
+| `user:<uid>:timeline:personal:importance` | zset | post ID → personal edge score | `ZREVRANGE` — descending |
+| `user:<uid>:timeline:everyone:importance` | zset | post ID → author's global social importance | `ZREVRANGE` — descending |
+
+Personal edge score comes from
+`user:<authorUid>:connection:edgescore:<recipientUid>` (a string-encoded double),
+read during delivery by `ShareService.getConnectionZScore`. The zset score is
+the author-to-recipient direction, so "personal" means "how much this author
+matters to *me*".
+
+The author's global social importance comes from `user:social:importance`
+(a zset keyed by UID). Neither the edgescore string keys nor the social-importance
+zset have writer code in this repo — they are expected to be populated out of
+band.
+
+Reply lists are separate:
+
+- `post:<parentId>:replies` — list of reply post IDs, newest-first.
+
+## Sessions (RSA key exchange)
+
+| Key | Type | Fields | TTL |
+|-----|------|--------|-----|
+| `session:<uuid>` | hash | `publicKey`, `privateKey` (both Base64-encoded 2048-bit RSA) | 1 day |
+
+Created lazily by `SessionService.getSession` the first time a UUID is
+requested. Re-requesting an existing UUID returns the stored public key (the
+caller has to remember it themselves — the response is empty the second time).
+
+## Counters and aggregates
+
+| Key | Type | Fields / scores |
+|-----|------|-----------------|
+| `photos` | hash | UID → number of photos posted by that user |
+| `videos` | hash | UID → number of videos posted by that user |
+| `posts` | hash | UID → number of text / reply / reshare posts by that user |
+| `user:social:importance` | zset | UID → global social importance score (read only by this app) |
+
+The photo / video / text counters are bumped inside
+`ShareService.createStatusUpdate`'s `MULTI`/`EXEC` block so they stay in sync
+with post creation.
+
+## Devices
+
+| Key | Type | Members |
+|-----|------|---------|
+| `user:<username>:devices` | set | registered device IDs |
+
+Managed by `DeviceService.register / deregister / list`. `StatusController`
+reads this set for `GET /api/devices/registered`. There is currently no HTTP
+endpoint to register or deregister devices — call the service directly from
+code, or adjust the set with `redis-cli` for now.
+
+> Device keys use **username**, not UID. This is a legacy inconsistency that
+> survived the migration. Post / follow / timeline keys all use UID. When
+> calling `DeviceService` you must pass the username, not the UID.
+
+## Content filters
+
+| Key | Type | Contents |
+|-----|------|----------|
+| `user:<uid>:negative:keywords` | hash | field = keyword, value = keyword (used as a set) |
+| `user:<uid>:images:blocked:md5` | hash | field = md5 hex, value = md5 hex |
+
+Both are queried at delivery time (`ShareService.shouldDeliver`) and at read
+time (`TimelineService.generatePost`). The hash-as-set pattern is intentional —
+`HSETNX` is O(1) and lets `POST /api/add/keyword/negative` return whether the
+keyword was new without an extra `EXISTS` round trip.
+
+## Read / write ownership
+
+| Service | Writes | Reads |
+|---------|--------|-------|
+| `UserService` | `user:<username>`, `user:uid`, `user:activations:*`, `tokens:*`, `user:<uid>:(followers\|following\|blocked\|blockers\|muted\|muters)` | all of the above + `user:<uid>:crypto`, `user:<uid>:(negative:keywords\|images:blocked:md5)` |
+| `SessionService` | `session:<uuid>` | `session:<uuid>` |
+| `ShareService` | `post:<postId>`, `post:<parentId>:replies`, `user:<uid>:timeline*` (fan-out), `photos`, `videos`, `posts` | `post:<postId>`, `user:<authorUid>:followers`, `user:<authorUid>:connection:edgescore:*`, `user:social:importance` |
+| `TimelineService` | — | `user:<uid>:timeline*`, `post:<postId>`, `post:<postId>:replies` |
+| `ActionService` | `post:<postId>likes:` (and the other three verbs), `post:<postId>:<actorUid>:` | same |
+| `DeviceService` | `user:<username>:devices` | same |
+| `TokenAuthenticationFilter` | `user:<username>.polyCount` (HINCRBY) | `tokens:*`, `user:uid` |
+
+## Key lifecycle summary
+
+- **TTLs**: only `tokens:<token>` and `session:<uuid>` expire. Everything else is
+  persistent until explicitly deleted.
+- **Deletion**: `DELETE /api/posts/{postId}` only removes `post:<postId>`. It
+  does **not** remove the post from follower timelines or reaction lists —
+  those are pruned lazily at read time by skipping entries with no hash body.
+- **Migration**: adding a new keyspace means adding both the writer (usually in
+  a service) and the reader (usually in a controller or another service), then
+  updating this page.
+
+## Related
+
+- [Architecture](../architecture.md) — high-level component diagram.
+- [Timeline delivery](timeline-delivery.md) — `pushGraph` fan-out in detail.
+- [Security filter](security-filter.md) — token lookup path.
+
+
+================================================================================
+FILE: docs/internals/timeline-delivery.md
+================================================================================
+
+# Timeline delivery
+
+Timelines in SocialGraph are **push-on-write**: when a user posts, the server
+iterates their follower set and writes the new post into each follower's
+timeline in the same request. There are no background workers, no fan-out queue,
+and no pull-at-read-time reconstruction.
+
+This page describes the algorithm, the filters it applies, the three timeline
+representations per user, and the delivery-time vs. view-time split.
+
+Authoritative code:
+[`ShareService`](../../src/main/java/com/intelligenta/socialgraph/service/ShareService.java)
+and
+[`TimelineService`](../../src/main/java/com/intelligenta/socialgraph/service/TimelineService.java).
+
+## Write path
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant Ctl as StatusController
+    participant SS as ShareService
+    participant OS as ObjectStorageService
+    participant US as UserService
+    participant R as Redis
+
+    C->>Ctl: POST /api/status type=photo
+    Ctl->>SS: sharePhoto uid content bytes contentType
+    SS->>SS: ImagePayloads.fromBytes
+    SS->>OS: upload bytes extension mime
+    OS-->>SS: StoredObject provider objectKey objectUrl
+    SS->>SS: Util.getMD5 bytes → imageHash
+    SS->>SS: createStatusUpdate
+    Note over SS,R: Redis MULTI
+    SS->>R: HSET post:postId id type uid created content url imageHash
+    SS->>R: addPostToTimeline author postId author
+    SS->>R: HINCRBY photos uid 1
+    Note over SS,R: Redis EXEC
+    SS->>SS: pushGraph uid postId words imageHash
+    SS->>R: SMEMBERS user:uid:followers
+    R-->>SS: follower UIDs
+    loop each follower
+        SS->>US: canViewContent hasMuted negativeKeyword imageBlocked
+        alt delivers
+            SS->>R: addPostToTimeline follower postId author
+        else skipped
+            SS-->>SS: skip
+        end
+    end
+    SS-->>Ctl: post map
+    Ctl-->>C: 200 OK JSON
+```
+
+### The MULTI and EXEC block
+
+`ShareService.createStatusUpdate` wraps the core persist step in
+`redisTemplate.multi()` followed by `redisTemplate.exec()`:
+
+1. `HSET post:<postId>` with `id`, `type`, `uid` (author), `created`, optional
+   `content`, optional `url`, optional `imageHash`, optional `parentId`, optional
+   `sharedPostId`.
+2. `addPostToTimeline(author, postId, author)` — adds the post to the **author's
+   own** timeline representations (the author sees their own posts in all three
+   views).
+3. If `parentId` is present: `LPUSH post:<parentId>:replies <postId>` — adds
+   this post to the parent's reply list.
+4. Per-type counter bump:
+   - `photo` → `HINCRBY photos <authorUid> 1`
+   - `video` → `HINCRBY videos <authorUid> 1`
+   - `text` / `reply` / `reshare` → `HINCRBY posts <authorUid> 1`
+
+The MULTI block is dispatched via Spring's `StringRedisTemplate` — note that
+Lettuce's MULTI is advisory and is not as strict as atomic Lua; partial failures
+are possible. See "Consistency notes" below.
+
+After the `EXEC` completes, the `pushGraph` fan-out runs outside the transaction.
+
+### `addPostToTimeline`
+
+Three writes per recipient:
+
+```
+LPUSH user:<recipient>:timeline <postId>
+ZADD  user:<recipient>:timeline:personal:importance  <postId> <personalScore>
+ZADD  user:<recipient>:timeline:everyone:importance  <postId> <everyoneScore>
+```
+
+- `personalScore = getConnectionZScore(author, recipient)` — reads the string
+  stored at `user:<author>:connection:edgescore:<recipient>`. Defaults to `0.0`
+  if the key does not exist.
+- `everyoneScore = getSocialImportance(author)` — reads `ZSCORE
+  user:social:importance <author>`. Also defaults to `0.0`.
+
+Neither edge-score store is populated by this app — they are expected inputs
+from another system. Until they are populated, both "personal" and "everyone"
+timelines will effectively sort by insertion order with ties at `0.0`.
+
+### `pushGraph` and the delivery filters
+
+`pushGraph` reads `SMEMBERS user:<author>:followers` and iterates. For each
+follower, `shouldDeliver` applies four tests:
+
+| Check | Source | Effect |
+|-------|--------|--------|
+| `UserService.canViewContent(follower, author)` | block sets — either side | skip if blocked either way |
+| `UserService.hasMuted(follower, author)` | `user:<follower>:muted` | skip if muted |
+| `UserService.hasNegativeKeyword(follower, words)` | `user:<follower>:negative:keywords` | skip if any extracted word matches |
+| `UserService.isImageBlocked(follower, imageHash)` | `user:<follower>:images:blocked:md5` | skip if hash is blocked |
+
+Content words come from
+`ShareService.getWords(content)`, which uses `java.text.BreakIterator` to split
+on word boundaries and keeps only tokens whose first character is a letter or
+digit. Hashtags are a subset of words (extracted by `getHashTags`, unused by
+delivery today).
+
+## Read path
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant Ctl as TimelineController
+    participant TS as TimelineService
+    participant US as UserService
+    participant R as Redis
+
+    C->>Ctl: GET /api/timeline index=0 count=20 Bearer
+    Ctl->>TS: getFifoTimeline uid 0 20
+    TS->>R: LRANGE user:uid:timeline 0 19
+    R-->>TS: post IDs
+    loop each postId
+        TS->>R: HGETALL post:postId
+        R-->>TS: post map
+        TS->>US: canViewContent uid post.uid
+        TS->>US: hasNegativeKeyword uid words
+        TS->>US: isImageBlocked uid imageHash
+        alt any filter hits or empty post
+            TS-->>TS: drop
+        else
+            TS-->>TS: include as TimelineEntry
+        end
+    end
+    TS-->>Ctl: TimelineResponse entities count duration
+    Ctl-->>C: 200 OK
+```
+
+Three things to notice:
+
+1. **The viewer sees only their own timeline list**, fetched with `LRANGE` (FIFO)
+   or `ZREVRANGE` (personal / everyone). There is no merging across sources and
+   no additional author fetches beyond the single `HGETALL post:<postId>` per
+   entry — everything you need lives on the post hash.
+2. **View-time filtering reapplies the same four delivery filters.** This is
+   intentional — if a user blocks someone after delivery, the existing posts
+   from that author are filtered out of timelines on the next read without any
+   back-scrubbing of the timeline list.
+3. **Filtered entries don't shrink the page automatically.** If 3 of the 20
+   fetched posts fail filters, the response returns 17 entries. `count` in the
+   response reflects what came back, not what was requested.
+
+## Why three representations
+
+| View | Key | Order |
+|------|-----|-------|
+| FIFO (`/api/timeline`) | `user:<uid>:timeline` (list) | newest-first |
+| Personal (`/api/timeline/personal`) | `user:<uid>:timeline:personal:importance` (zset) | by personal edge score, desc |
+| Everyone (`/api/timeline/everyone`) | `user:<uid>:timeline:everyone:importance` (zset) | by author's global score, desc |
+
+They are three materializations of the same post set, not three different sets.
+`pushGraph`'s fan-out writes all three in the same `addPostToTimeline` call, so
+any delivered post appears in all three views and any deletion must scrub all
+three (there is currently no such scrub — see "Known gaps").
+
+## Consistency notes
+
+- **MULTI / EXEC is advisory.** If Lettuce disconnects between commands, the
+  transaction is canceled but individual queued commands may still have applied
+  partially. The consequences are limited to orphaned counters or timeline
+  entries — there is no secondary index to get out of sync.
+- **Orphans are silently skipped at read time.** `TimelineService.generatePost`
+  returns `null` if `post:<postId>` is empty. Deleted or partially written
+  posts disappear from the response without pruning the list.
+- **No transactional fan-out.** The `pushGraph` loop sits outside the MULTI
+  block, so a crash mid-fan-out leaves the post delivered to some followers and
+  not others. No retry exists today.
+
+## Known gaps
+
+- `POST /api/posts/{postId}/reshare` calls `createStatusUpdate` with
+  `type=reshare`. It does **not** duplicate the original author's reach to the
+  resharing user's followers — the reshare post itself is delivered to the
+  resharing user's followers, but the original post body is referenced only
+  by `sharedPostId`.
+- Deletes do not scrub timelines or reaction lists.
+- There is no `unfollow` cleanup for previously delivered posts.
+- Personal and global importance scores have no writer in this repo.
+
+## Related
+
+- [API: status](../api/status.md) — `POST /api/status` shapes.
+- [API: timeline](../api/timeline.md) — the read endpoints.
+- [Redis schema](redis-schema.md) — every key and hash field.
+- [Image pipeline](image-pipeline.md) — how `imageHash` is computed.
+
+
+================================================================================
+FILE: docs/internals/storage-providers.md
+================================================================================
+
+# Storage providers
+
+SocialGraph's media storage is an `ObjectStorageService` interface with three
+implementations. Exactly one is active at a time, picked by the `storage.provider`
+property.
+
+Authoritative code:
+[`service/storage/`](../../src/main/java/com/intelligenta/socialgraph/service/storage/).
+
+## Interface
+
+```java
+public interface ObjectStorageService {
+    String provider();
+    StorageUploadTarget createSignedUploadTarget(String extension, String contentType);
+    StoredObject upload(byte[] bytes, String extension, String contentType);
+    void download(String objectKey, OutputStream outputStream);
+}
+```
+
+- `provider()` — returns the short string (`"azure"`, `"gcp"`, `"oci"`) used in
+  response DTOs.
+- `createSignedUploadTarget(ext, contentType)` — returns a
+  [`StorageUploadTarget`](../../src/main/java/com/intelligenta/socialgraph/model/StorageUploadTarget.java):
+  `{provider, objectKey, objectUrl, uploadUrl, method, headers, expiresIn}`.
+  The caller `PUT`s to `uploadUrl` with the listed `headers` (and any body).
+- `upload(bytes, ext, contentType)` — performs the upload server-side and
+  returns a [`StoredObject`](../../src/main/java/com/intelligenta/socialgraph/model/StoredObject.java):
+  `{provider, objectKey, objectUrl, contentType}`.
+- `download(objectKey, os)` — streams an object to the output stream. Used
+  internally; not exposed over HTTP.
+
+Both write paths go through the same object-key generator in
+[`AbstractObjectStorageService.nextObjectKey`](../../src/main/java/com/intelligenta/socialgraph/service/storage/AbstractObjectStorageService.java):
+`<prefix><uuid><extension>` — where `prefix` is `storage.object-key-prefix`
+(trailing `/` inferred) and `extension` is either `".png"`, `".jpg"`, `".webp"`,
+or empty.
+
+## Provider selection
+
+```mermaid
+flowchart LR
+    A["storage.provider<br/>from application.yml or env"] --> B{value}
+    B -->|azure / missing| C[AzureObjectStorageService]
+    B -->|gcp| D[GcpObjectStorageService]
+    B -->|oci| E[OciObjectStorageService]
+    C -. @ConditionalOnProperty .-> F[(Azure Blob)]
+    D -. @ConditionalOnProperty .-> G[(GCS)]
+    E -. @ConditionalOnProperty .-> H[(OCI Object Storage)]
+```
+
+Each implementation has a `@ConditionalOnProperty(prefix="storage", name="provider", ...)` annotation:
+
+| Class | `havingValue` | `matchIfMissing` |
+|-------|---------------|------------------|
+| `AzureObjectStorageService` | `azure` | `true` (default when unset) |
+| `GcpObjectStorageService` | `gcp` | false |
+| `OciObjectStorageService` | `oci` | false |
+
+The inactive classes are excluded from the Spring application context, so the
+unused SDK dependencies are still on the classpath but their clients are never
+instantiated.
+
+## Startup and failure modes
+
+Each provider initializes in `@PostConstruct`. Initialization failures are
+**logged and swallowed** — the bean stays in the context but its client field is
+`null`. Any subsequent call will throw `SocialGraphException("storage_unavailable", ...)`
+and surface as a `400 storage_unavailable` error (via
+[`GlobalExceptionHandler`](../../src/main/java/com/intelligenta/socialgraph/exception/GlobalExceptionHandler.java)).
+
+This lets the app come up with broken storage configuration so developers can
+poke around non-upload endpoints, at the cost of late failure rather than fail-fast.
+If you want fail-fast, change the catch blocks in each `init()` method to rethrow.
+
+## Azure Blob Storage
+
+[`AzureObjectStorageService`](../../src/main/java/com/intelligenta/socialgraph/service/storage/AzureObjectStorageService.java).
+
+- **Client:** `BlobServiceClient` built from `storage.azure.connection-string`.
+- **Container:** `storage.azure.container-name` (default `photos`). Created on
+  startup if absent.
+- **Upload target (`createSignedUploadTarget`):** generates a new object key,
+  asks the blob for its `generateSas(...)` with `create / write / read`
+  permissions and `OffsetDateTime.now() + signedUrlTtlSeconds`. Returns the
+  blob URL for both `objectUrl` (read) and `<blob-url>?<sas>` for `uploadUrl`.
+  Headers include `x-ms-blob-type: BlockBlob`; adds `Content-Type` if the caller
+  passed one.
+- **Server-side upload (`upload`):** wraps the bytes in a
+  `ByteArrayInputStream`, calls `blobClient.upload(stream, length, true)` (with
+  overwrite), then `setHttpHeaders` for the content type if provided. Returns a
+  `StoredObject` with `blobClient.getBlobUrl()`.
+- **Download:** `blobClient.downloadStream` into an intermediate
+  `ByteArrayOutputStream`, then written to the caller's stream.
+
+Relevant env vars:
+
+| Variable | Used by |
+|----------|---------|
+| `AZURE_STORAGE_CONNECTION_STRING` | `BlobServiceClientBuilder.connectionString` |
+| `AZURE_STORAGE_CONTAINER` | container name |
+
+See [configuration](../configuration.md#azure-blob-storage) for the full list.
+
+## Google Cloud Storage
+
+[`GcpObjectStorageService`](../../src/main/java/com/intelligenta/socialgraph/service/storage/GcpObjectStorageService.java).
+
+- **Client:** `StorageOptions.newBuilder().setProjectId(...).build().getService()`.
+  Credentials come from Application Default Credentials (GCE metadata, workload
+  identity, or `GOOGLE_APPLICATION_CREDENTIALS`).
+- **Bucket:** `storage.gcp.bucket-name`. The startup path calls
+  `storage.get(bucketName)` and logs a warning if it is missing, but does not
+  create it.
+- **Upload target:** `storage.signUrl` with `HttpMethod.PUT`,
+  `withV4Signature()`, and the caller's content type added via
+  `withExtHeaders`. Returns `signedUrl.toString()` as `uploadUrl`.
+- **Server-side upload:** `storage.create(blobInfo, bytes)`.
+- **`objectUrl`:** the public HTTPS URL
+  `https://storage.googleapis.com/<bucket>/<encodedObjectKey>`.
+- **Download:** `storage.readAllBytes(BlobId.of(bucket, key))`.
+
+## Oracle Cloud Infrastructure Object Storage
+
+[`OciObjectStorageService`](../../src/main/java/com/intelligenta/socialgraph/service/storage/OciObjectStorageService.java).
+
+- **Client:** `ObjectStorageClient(ConfigFileAuthenticationDetailsProvider(...))`
+  — either with an explicit config file (`storage.oci.config-file`) or the SDK
+  default (`~/.oci/config`), and a profile (`storage.oci.profile`, default
+  `DEFAULT`).
+- **Endpoint:** explicit `storage.oci.endpoint` wins; otherwise the region is
+  mapped via `Region.fromRegionId(region)`. If neither is set, operations that
+  need `baseEndpoint()` throw `storage_unavailable`.
+- **Upload target:** creates a Pre-Authenticated Request (PAR) with
+  `AccessType.ObjectWrite` and expiry `now + signedUrlTtlSeconds * 1000`. The
+  final URL is `baseEndpoint() + par.getAccessUri()`.
+- **Server-side upload:** `objectStorageClient.putObject(...)` with the bytes,
+  content length, and optional content type.
+- **`objectUrl`:** composed as
+  `<baseEndpoint>/n/<namespace>/b/<bucket>/o/<encodedKey>`.
+- **Shutdown:** `@PreDestroy` calls `objectStorageClient.close()`.
+
+## Where the controllers touch the provider
+
+- [`StorageController.requestStorageKey`](../../src/main/java/com/intelligenta/socialgraph/controller/StorageController.java)
+  → `createSignedUploadTarget(null, null)`.
+- `StorageController.uploadWithRescale` → `upload(rescaled.bytes, ext, mime)`.
+- [`ShareService.sharePhoto(uid, content, bytes, contentType)`](../../src/main/java/com/intelligenta/socialgraph/service/ShareService.java)
+  → `upload(bytes, ext, mime)` after `ImagePayloads.fromBytes`.
+
+No controller or service calls `download` today; it is reserved for
+administrative tooling.
+
+## Adding a new provider
+
+1. Create `<Name>ObjectStorageService extends AbstractObjectStorageService`.
+2. Annotate with
+   `@Service` and
+   `@ConditionalOnProperty(prefix="storage", name="provider", havingValue="<name>")`.
+3. Implement `provider()`, `createSignedUploadTarget`, `upload`, and `download`.
+4. Add a nested properties class to
+   [`StorageProperties`](../../src/main/java/com/intelligenta/socialgraph/config/StorageProperties.java),
+   plus a `storage.<name>.*` block in `application.yml` with the env-var placeholders.
+5. Add a row to [Configuration](../configuration.md) and this page.
+6. Add a `@ConditionalOnProperty`-filtered test covering provider bootstrap.
+
+## Related
+
+- [API: storage](../api/storage.md) — the two HTTP entry points.
+- [Image pipeline](image-pipeline.md) — how uploads get to this layer.
+- [Configuration](../configuration.md#object-storage-shared) — full env var list.
+
+
+================================================================================
+FILE: docs/internals/image-pipeline.md
+================================================================================
+
+# Image pipeline
+
+The image pipeline has two parts: format detection / MIME normalization
+(`ImagePayloads`) and seam-carving width reduction (`LiquidRescaler`). The two
+work together in `POST /api/lq/upload`, and `ImagePayloads` is also used by
+`ShareService.sharePhoto` when bytes come in over `POST /api/status`.
+
+Authoritative code:
+[`util/ImagePayloads.java`](../../src/main/java/com/intelligenta/socialgraph/util/ImagePayloads.java),
+[`LiquidRescaler.java`](../../src/main/java/com/intelligenta/socialgraph/LiquidRescaler.java),
+[`controller/StorageController.java`](../../src/main/java/com/intelligenta/socialgraph/controller/StorageController.java).
+
+## Supported MIME types
+
+Only three image formats are accepted anywhere in the pipeline:
+
+| MIME type | Extension | Magic bytes |
+|-----------|-----------|-------------|
+| `image/jpeg` | `.jpg` | `FF D8 FF` |
+| `image/png` | `.png` | `89 50 4E 47 0D 0A 1A 0A` |
+| `image/webp` | `.webp` | `RIFF....WEBP` |
+
+Aliases (`image/jpg`, `image/x-png`, `image/x-webp`) are normalized via
+`ImagePayloads.normalizeMimeType`.
+
+Anything else — GIF, AVIF, HEIC, TIFF, SVG, PDF — fails fast with
+`unsupported_image_type`.
+
+## `ImagePayloads`
+
+Two entry points:
+
+### `fromBase64(imageBase64, requestedMimeType)`
+
+Parses a base64 string into an `ImagePayload(bytes, mimeType, extension)`.
+Handles both raw base64 and `data:image/png;base64,...` data URLs.
+
+```mermaid
+flowchart TD
+    A[imageBase64 input] --> B{data: URL prefix?}
+    B -->|yes| C[parse metadata before comma]
+    C --> D{contains ;base64?}
+    D -->|no| E[throw invalid_image_payload]
+    D -->|yes| F[extract mimeType from data URL]
+    B -->|no| G[use payload as-is]
+    F --> H[Base64.getMimeDecoder decode]
+    G --> H
+    H -->|invalid base64| E
+    H -->|bytes| I[fromBytes]
+    I --> J[ImagePayload]
+```
+
+### `fromBytes(bytes, requestedMimeType)`
+
+Detects the MIME from the magic bytes first, then falls back to the caller's
+hint if detection fails.
+
+```mermaid
+flowchart TD
+    A[bytes] --> B{null or empty?}
+    B -->|yes| C[throw invalid_image_payload]
+    B -->|no| D[detectMimeType: check magic bytes]
+    D -->|JPEG/PNG/WebP| E[use detected MIME]
+    D -->|none| F{normalized hint<br/>supported?}
+    F -->|yes| G[use hint]
+    F -->|no / null| H[throw unsupported_image_type]
+    E --> I[ImagePayload<br/>bytes, mime, extension]
+    G --> I
+```
+
+The detector wins over the caller's hint when it has a result. This prevents
+clients from lying about the MIME to sneak through an unsupported format.
+
+### Normalization and allow-listing
+
+- `normalizeMimeType("IMAGE/JPG")` → `"image/jpeg"` (alias folded; parameters
+  like `;charset=utf-8` stripped).
+- `normalizeRequestedMimeType("application/octet-stream")` → `null` (treated
+  as "no hint").
+- Any non-alias MIME that is not in the allow-list
+  (`image/jpeg`, `image/png`, `image/webp`) throws immediately — even if the
+  detector has not run yet.
+
+### Extension resolution
+
+`extensionForMimeType` maps the normalized MIME back to the file extension used
+for generated object keys (`.jpg`, `.png`, `.webp`). This is what
+`AbstractObjectStorageService.nextObjectKey` uses to build the final object key.
+
+## `LiquidRescaler`
+
+`LiquidRescaler` is a pure-Java seam carving implementation, originally authored
+by Jacopo Farina (2014) and preserved through the migration. Seam carving shaves
+vertical seams from an image to reduce its width while preserving "important"
+content.
+
+**Primary entry point used by the HTTP layer:**
+
+```java
+public static RescaledImage rescaleImage(
+    byte[] sourceBytes,
+    int numPixelsToRemove,
+    int stepSize,
+    String preferredMimeType
+) throws IOException
+```
+
+- `sourceBytes` — raw input bytes (not base64).
+- `numPixelsToRemove` — how much to shave off the width. Must be strictly less
+  than the image width; otherwise `invalid_image_payload`.
+- `stepSize` — how many seams to carve per pass. Smaller = more precise, slower.
+  The HTTP path uses `1`.
+- `preferredMimeType` — hint for the output format. If ImageIO cannot write the
+  hinted format it falls back to `image/png`, then `image/jpeg`, then throws.
+
+Returns `RescaledImage(byte[] bytes, String mimeType, String extension)`.
+
+Internally:
+
+1. `getMinVarianceMatrix(image)` computes a cumulative cost matrix over pixel
+   gradient differences.
+2. `markBestPaths(matrix, n)` marks the `n` lowest-cost seams as
+   `Integer.MAX_VALUE`.
+3. `rescaleImage(image, matrix, n)` copies the non-marked pixels into a new
+   image of reduced width.
+4. `rescaleImageInSteps` repeats steps 1–3 `stepSize` pixels at a time, letting
+   the cost matrix re-converge after each pass.
+5. `chooseOutputMimeType` picks a writer-compatible output format.
+
+This is CPU-bound and runs on the request thread. The code works on small
+images; at production sizes it becomes a latency hot path and is a candidate for
+a native Rust port (the legacy README calls this out).
+
+## `POST /api/lq/upload` end to end
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant SC as StorageController
+    participant IP as ImagePayloads
+    participant LR as LiquidRescaler
+    participant OS as ObjectStorageService
+    participant Blob as Object store
+
+    C->>SC: POST /api/lq/upload JSON<br/>{imageBase64, cut, mimeType?}
+    SC->>IP: fromBase64(imageBase64, mimeType)
+    IP-->>SC: ImagePayload(bytes, mime, extension)
+    SC->>LR: rescaleImage(bytes, cut, 1, mime)
+    LR->>LR: decode → cost matrix → mark seams → shave → encode
+    LR-->>SC: RescaledImage(bytes, outMime, outExt)
+    SC->>OS: upload(bytes, outExt, outMime)
+    OS->>Blob: PUT (Azure / GCS / OCI)
+    Blob-->>OS: 200
+    OS-->>SC: StoredObject{provider, objectKey, objectUrl, contentType}
+    SC-->>C: 200 LqUploadResponse
+```
+
+## `POST /api/status` with raw photo bytes
+
+A lighter path — no rescale, just upload:
+
+```mermaid
+flowchart LR
+    A[POST /api/status<br/>type=photo body=bytes] --> B[ShareService.sharePhoto]
+    B --> C[ImagePayloads.fromBytes bytes,contentType]
+    C --> D[Util.getMD5 bytes<br/>imageHash]
+    C --> E[ObjectStorageService.upload]
+    E --> F[StoredObject.objectUrl]
+    D --> G[createStatusUpdate with imageHash]
+    F --> G
+    G --> H[HSET post with imageHash and url]
+```
+
+The `imageHash` returned by `Util.getMD5` feeds straight into the post hash so
+`ShareService.shouldDeliver` and `TimelineService.generatePost` can cross-check
+against recipients' `user:<uid>:images:blocked:md5` filters.
+
+## Error codes emitted
+
+| Where | Code | Typical cause |
+|-------|------|---------------|
+| `fromBase64` — no comma in data URL | `invalid_image_payload` | Malformed `data:` prefix |
+| `fromBase64` — no `;base64` | `invalid_image_payload` | Data URL not base64 |
+| `fromBase64` — `Base64.decode` fails | `invalid_image_payload` | Not valid base64 |
+| `fromBytes` — null / empty | `invalid_image_payload` | Upload body empty |
+| `fromBytes` — no MIME hint, no detection | `unsupported_image_type` | Unknown format |
+| `normalizeRequestedMimeType` — alien format | `unsupported_image_type` | GIF, AVIF, etc. |
+| `rescaleImage` — `cut >= width` | `invalid_image_payload` | User asked to shave more than the image width |
+| `rescaleImage` — ImageIO cannot decode | `invalid_image_payload` | Corrupt bytes |
+| `rescaleImage` — no compatible writer | `invalid_image_payload` | Writer missing for output MIME |
+
+All of these surface as `400` through `GlobalExceptionHandler`.
+
+## Related
+
+- [API: storage](../api/storage.md) — the two HTTP entry points.
+- [Storage providers](storage-providers.md) — where the final bytes land.
+- [Timeline delivery](timeline-delivery.md) — where `imageHash` is used.
+
+
+================================================================================
+FILE: docs/internals/security-filter.md
+================================================================================
+
+# Security filter internals
+
+[`TokenAuthenticationFilter`](../../src/main/java/com/intelligenta/socialgraph/security/TokenAuthenticationFilter.java)
+is the single piece of authentication machinery in the app. It reads the
+`Authorization` header, resolves the token to a UID via Redis, loads the
+username, builds an `AuthenticatedUser`, and installs it in Spring's
+`SecurityContext`.
+
+This page describes the filter in detail, why the ordering matters, and what
+each Redis call does.
+
+## Filter registration
+
+`SecurityConfig` registers the filter via:
+
+```java
+.addFilterBefore(tokenAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+```
+
+That means: for every request, `TokenAuthenticationFilter.doFilterInternal`
+runs before `UsernamePasswordAuthenticationFilter` in the servlet filter chain.
+Since SocialGraph never uses `UsernamePasswordAuthenticationFilter` (no form
+login), the chain effectively becomes:
+
+```
+Request → TokenAuthenticationFilter → SecurityFilterChain rules → Controller
+```
+
+The `authorizeHttpRequests` block then decides 401 vs. pass-through based on
+whether the principal is present. If `TokenAuthenticationFilter` left the
+context empty — either because the header was missing, malformed, or the
+lookup failed — any non-public route returns 401 via Spring Security's
+`AuthenticationEntryPoint`.
+
+## Algorithm
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant R as Request
+    participant F as TokenAuthenticationFilter
+    participant Redis as Redis
+    participant SC as SecurityContextHolder
+    participant Chain as FilterChain
+
+    R->>F: incoming request
+    F->>F: extract Authorization header
+    alt starts with "Bearer "
+        F->>F: strip "Bearer " prefix → token
+        F->>Redis: GET tokens:<token>
+        Redis-->>F: uid (or nil)
+        alt uid present
+            F->>Redis: HGET user:uid <uid>
+            Redis-->>F: username
+            F->>F: new AuthenticatedUser(uid, username)
+            F->>SC: setAuthentication(principal)
+            F->>Redis: HINCRBY user:<username> polyCount 1
+        else uid missing
+            Note over F: leave SecurityContext empty
+        end
+    else no Bearer header
+        Note over F: leave SecurityContext empty
+    end
+    F->>Chain: filterChain.doFilter(...)
+```
+
+## Step-by-step
+
+### 1. Extract the token
+
+```java
+String bearerToken = request.getHeader("Authorization");
+if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
+    return bearerToken.substring(7);
+}
+return null;
+```
+
+- Only `Authorization: Bearer <token>` is recognized.
+- Query-string tokens are not supported (intentional — see the
+  [changelog](../../CHANGELOG.md) breaking change note).
+- Missing header → filter short-circuits to `filterChain.doFilter` without
+  setting any principal.
+
+### 2. Resolve token → UID
+
+```java
+String uid = redisTemplate.opsForValue().get("tokens:" + token);
+```
+
+- Key: `tokens:<token>`.
+- Value: the UID string.
+- TTL: `app.security.token-expiration-seconds` (default 86400 seconds, set at
+  token creation by `UserService.register` and `login`).
+- Miss → filter proceeds without setting a principal.
+
+### 3. Resolve UID → username
+
+```java
+String username = (String) redisTemplate.opsForHash().get("user:uid", uid);
+```
+
+- Key: `user:uid` hash.
+- Field: the UID.
+- Value: username (null if the UID is unknown).
+
+### 4. Install the principal
+
+```java
+AuthenticatedUser user = new AuthenticatedUser(uid, username);
+UsernamePasswordAuthenticationToken authentication =
+    new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+SecurityContextHolder.getContext().setAuthentication(authentication);
+```
+
+- `AuthenticatedUser.getAuthorities()` is an empty collection — there are no
+  roles in the system, so authorization is essentially binary (authenticated or
+  not).
+- `setDetails` records the remote IP and session ID on the authentication object
+  for downstream audit use.
+
+### 5. Side effect: bump the per-user counter
+
+```java
+if (username != null) {
+    redisTemplate.opsForHash().increment("user:" + username, "polyCount", 1);
+}
+```
+
+- Field: `polyCount` on the user's hash.
+- Purpose: coarse per-user request counter. Only incremented when the token was
+  valid and the username resolved, so it approximates authenticated requests
+  per user.
+- **Cost:** one extra Redis round trip on every authenticated request. Turn this
+  off if you profile and it shows up hot.
+
+## Errors inside the filter
+
+The entire body is wrapped in try/catch:
+
+```java
+try {
+    // all of the above
+} catch (Exception e) {
+    log.error("Cannot set user authentication", e);
+}
+filterChain.doFilter(request, response);
+```
+
+Any Redis error, any parsing error, any NullPointerException is logged and
+swallowed. The filter then calls the next filter without a principal. This is
+intentional — a Redis blip should not 500 every public request — but it means
+auth failures are nearly indistinguishable from "no token sent" at the HTTP
+layer. Look at the logs for the actual cause.
+
+## Public endpoints
+
+`SecurityConfig` allows these through unauthenticated (hardcoded in the filter
+chain, mirrored in `app.public-endpoints` for documentation):
+
+- `/api/login`
+- `/api/register`
+- `/api/ping`
+- `/api/session`
+- `/api/activate`
+
+Even on a public endpoint `TokenAuthenticationFilter` still runs — it just
+cannot install a principal if no token is present (or a bogus token is sent).
+There is no shortcut check.
+
+## Test injection
+
+Controller tests use
+[`TestAuthenticatedUserResolver`](../../src/test/java/com/intelligenta/socialgraph/support/TestAuthenticatedUserResolver.java)
++
+[`TestRequestPostProcessors`](../../src/test/java/com/intelligenta/socialgraph/support/TestRequestPostProcessors.java)
+to inject `@AuthenticationPrincipal AuthenticatedUser` **without** going through
+the real filter. `standaloneSetup` MockMvc bypasses Spring Security entirely; the
+custom `HandlerMethodArgumentResolver` reads the UID and username from request
+attributes set by the post-processor and constructs an `AuthenticatedUser`
+directly.
+
+This is the right compromise for unit-level controller tests — the filter
+itself is tested separately in `TokenAuthenticationFilterTest`, and the full
+security chain is exercised in `SecurityConfigTest`.
+
+## Known cost and scaling notes
+
+- **Two Redis round trips per authenticated request** (`GET` + `HGET`), plus
+  the counter bump (`HINCRBY`) — three round trips total. At moderate
+  concurrency this is the hot path. A local LRU token cache keyed by token
+  with a short TTL would cut this to ~one round trip on cache miss.
+- **No rate limiting.** Tokens are opaque and `polyCount` is advisory; there is
+  nothing preventing a loud client from drowning the service.
+- **No token revocation endpoint.** `DEL tokens:<token>` via a privileged tool
+  is the only way.
+
+## Related
+
+- [Authentication](../authentication.md) — higher-level model.
+- [Redis schema](redis-schema.md) — `tokens:*` and `user:uid` details.
+- [API: auth](../api/auth.md) — token issuance endpoints.
+
+
+================================================================================
+FILE: docs/testing.md
+================================================================================
+
+# Testing
+
+The verification gate for the project is:
+
+```bash
+./mvnw test
+```
+
+Everything on the test tree lives under
+[`src/test/java/com/intelligenta/socialgraph/`](../src/test/java/com/intelligenta/socialgraph/).
+
+## Test layout
+
+```
+src/test/java/com/intelligenta/socialgraph/
+  ApiSurfaceRegressionTest.java     ← fixes the full public HTTP surface
+  CoreUtilitiesTest.java            ← utility + config contracts
+  config/
+    SecurityConfigTest.java         ← public vs protected route matrix
+  security/
+    TokenAuthenticationFilterTest.java
+  controller/
+    AuthControllerTest.java
+    UserControllerTest.java
+    ActionControllerTest.java
+    StatusControllerTest.java
+    TimelineControllerTest.java
+    StorageControllerTest.java
+  service/
+    UserServiceTest.java
+    SessionServiceTest.java
+    ShareServiceTest.java
+    TimelineServiceTest.java
+    ActionServiceTest.java
+    DeviceServiceTest.java
+    storage/
+      ObjectStorageServicesTest.java
+  util/
+    ImagePayloadsTest.java
+  support/
+    TestAuthenticatedUserResolver.java
+    TestRequestPostProcessors.java
+```
+
+## The regression gate: `ApiSurfaceRegressionTest`
+
+This is the single most important test in the project. It asserts that:
+
+- **All 51 endpoints** from the API reference exist (same method and path).
+- **The legacy routes** `/api/aes/key` and `/api/get/image` do **not** exist —
+  they were intentionally not migrated.
+- **Response shapes** use the new field names:
+  - `ActionResponse` → `actionType`, `actors` (not legacy `likes`).
+  - `MembersResponse` → `setType`, `members` (not legacy `followers`).
+  - `TimelineResponse` → `entities`; each entry uses `actorUid` / `actorUsername`
+    (not legacy `actor` / `activity`).
+
+If you add an endpoint, add it here. If you remove one, remove it here. If the
+test starts failing, you have made an accidental breaking change to the public
+surface.
+
+See
+[`ApiSurfaceRegressionTest.java`](../src/test/java/com/intelligenta/socialgraph/ApiSurfaceRegressionTest.java).
+
+## Controller slice tests
+
+Each controller has a dedicated test class (`<Name>ControllerTest`) that stands
+up a `MockMvc` instance with **only that controller** and the custom argument
+resolver that injects `@AuthenticationPrincipal AuthenticatedUser`. These tests
+cover:
+
+- Happy path: one test per endpoint asserts `200 OK` and the key response
+  fields the DTO serializes.
+- Error path: a few key failure modes per controller (e.g. missing required
+  params, duplicate follow, unknown post).
+- Principal injection: every authenticated route test uses
+  `TestRequestPostProcessors.authenticatedUser(uid)` to attach a pre-resolved
+  principal to the request.
+
+**Important:** controller tests use `standaloneSetup`, which **does not run the
+Spring Security filter chain.** This means:
+
+- `TokenAuthenticationFilter` is **not** exercised by these tests — use
+  `TokenAuthenticationFilterTest` for that.
+- Public vs protected routing is **not** enforced at this layer — use
+  `SecurityConfigTest` for that.
+- The `@AuthenticationPrincipal` argument is resolved by
+  `TestAuthenticatedUserResolver`, not by the filter.
+
+## Security and auth tests
+
+[`SecurityConfigTest`](../src/test/java/com/intelligenta/socialgraph/config/SecurityConfigTest.java)
+stands up a real `SecurityFilterChain` and asserts:
+
+- `/api/ping`, `/api/session` are public (accessible without a Bearer token).
+- Protected endpoints return `401` without a token.
+- A valid Bearer token (via mocked Redis) lets protected endpoints through.
+- Legacy routes `/api/aes/key` return `403` without auth and `404` with auth —
+  i.e. they are protected by the filter chain but have no controller handler.
+
+[`TokenAuthenticationFilterTest`](../src/test/java/com/intelligenta/socialgraph/security/TokenAuthenticationFilterTest.java)
+unit-tests the filter in isolation:
+
+- Missing `Authorization` header → `SecurityContext` stays empty.
+- Malformed (non-`Bearer`) header → context stays empty.
+- Valid token → principal installed; `polyCount` incremented.
+- Unknown token → context stays empty, no exception.
+- Redis throwing an exception → logged, context empty, request proceeds.
+
+## Service tests
+
+One class per service. These are plain JUnit tests against mocked
+`StringRedisTemplate` and collaborators. They cover the shape of each method's
+Redis interactions (which keys are read, which are written, with what arguments).
+
+For `UserService` the covered behaviors include:
+- register → creates the correct Redis layout and returns the expected
+  `AuthResponse`.
+- login → salt + argon2 validation.
+- follow / unfollow / block / mute → correct set writes and counter bumps.
+- `canViewContent`, `hasBlocked`, `hasMuted`, `isImageBlocked`, `hasNegativeKeyword`.
+
+For `ShareService` / `TimelineService`: `pushGraph` fan-out, filter evaluation,
+and timeline read-time filtering.
+
+For `ActionService`: perform / reverse / list per verb, plus the "already done"
+and "not done" branches.
+
+For `ObjectStorageServicesTest`: object-key prefix handling, `StoredObject` /
+`StorageUploadTarget` construction via the abstract base class (provider
+clients are mocked).
+
+## Utility tests
+
+[`CoreUtilitiesTest`](../src/test/java/com/intelligenta/socialgraph/CoreUtilitiesTest.java)
+covers the small utilities: UUID generation, MD5, unix time, Argon2 /
+PBKDF2 hashing, DTO JSON serialization shape (especially the snake_case
+`expires_in`, `activation_token`, `error_description` fields and the
+`@type: "person"` field on `ActionActor`), `AppProperties` defaults, and
+`RedisConfig` bean wiring.
+
+[`ImagePayloadsTest`](../src/test/java/com/intelligenta/socialgraph/util/ImagePayloadsTest.java)
+covers MIME detection (magic bytes win over content-type hints), data URL
+parsing, and alias normalization.
+
+## Test support
+
+`TestAuthenticatedUserResolver` is a
+`HandlerMethodArgumentResolver` that resolves any parameter of type
+`AuthenticatedUser` by reading `UID_ATTRIBUTE` / `USERNAME_ATTRIBUTE` off the
+request and constructing a new `AuthenticatedUser(uid, username)`.
+
+`TestRequestPostProcessors.authenticatedUser(uid)` /
+`authenticatedUser(uid, username)` returns a Spring `RequestPostProcessor` that
+sets those attributes on the incoming request before the controller method
+runs. Controller tests register the resolver on their `MockMvc` builder with
+`.setCustomArgumentResolvers(new TestAuthenticatedUserResolver())`.
+
+This two-piece pattern lets controller tests inject an authenticated principal
+without pulling in the full Spring Security filter chain.
+
+## Running a single test
+
+```bash
+./mvnw test -Dtest=UserControllerTest
+./mvnw test -Dtest=ApiSurfaceRegressionTest
+./mvnw test -Dtest='UserServiceTest#registerCreatesRedisLayout'
+```
+
+Maven's failsafe / surefire runners honor the standard `-Dtest=...` selector.
+
+## Adding tests
+
+Rules of thumb:
+
+1. **Public surface changes** — always update `ApiSurfaceRegressionTest` in the
+   same commit.
+2. **Controller behavior changes** — add a test to the matching
+   `<Name>ControllerTest`.
+3. **Redis key changes** — add a service-level test to assert the new key shape.
+   Then update [Redis schema](internals/redis-schema.md).
+4. **Error codes** — if you add a new exception + code, add a handler test case
+   in `GlobalExceptionHandlerTest` (add the file if it doesn't exist) and a row
+   to [API errors](api/errors.md).
+
+## Related
+
+- [API reference](api/README.md) — what the controller tests verify at the HTTP
+  layer.
+- [Authentication](authentication.md) — what the security tests verify.
+- [Redis schema](internals/redis-schema.md) — ground truth that service tests
+  should match.
+
+
+================================================================================
+FILE: docs/agent-skills.md
+================================================================================
+
+# Agent skills
+
+SocialGraph ships a small set of **repo-local skills** under
+[`.claude/skills/`](../.claude/skills/README.md). These are concise procedural
+guides designed to be consumed by LLM agents (Claude Code, Codex, Copilot,
+Gemini CLI, or any MCP-aware client that can load markdown skills from the
+repo). Each skill routes the agent to the right documentation pages and encodes
+workflow rules that experience has shown to trip up naive edits.
+
+Skills are **not a replacement for the docs**. They are short triggers plus
+decision trees; the canonical information lives in [`docs/`](README.md).
+
+## Skill index
+
+| Skill | Triggers on | What it does | Canonical docs |
+|-------|-------------|--------------|----------------|
+| [`api-endpoint-work`](../.claude/skills/api-endpoint-work/SKILL.md) | Adding, removing, or modifying any `/api/...` route, or adjusting a controller, DTO, or error mapping. | Enforces the end-to-end checklist: code change → controller test → `ApiSurfaceRegressionTest` → API reference doc → error table. | [API reference](api/README.md), [errors](api/errors.md), [testing](testing.md) |
+| [`redis-schema-work`](../.claude/skills/redis-schema-work/SKILL.md) | Adding or changing any Redis key — new hash field, new list, new zset, new counter, new prefix. | Walks the reader through the write / read / test / doc update sequence and points at the keys table. | [Redis schema](internals/redis-schema.md), [timeline delivery](internals/timeline-delivery.md) |
+| [`storage-provider-work`](../.claude/skills/storage-provider-work/SKILL.md) | Adding a new object-storage backend, changing the `ObjectStorageService` contract, or adjusting upload / signed-URL behavior. | Details the `@ConditionalOnProperty` pattern, properties class, `application.yml` block, configuration doc, and tests. | [Storage providers](internals/storage-providers.md), [configuration](configuration.md), [API: storage](api/storage.md) |
+
+## When to invoke a skill
+
+- **Starting any change** that matches a skill trigger. Reading the skill first
+  keeps you from forgetting the doc or regression-test update that the rest of
+  the workflow expects.
+- **Writing a plan** for a non-trivial change. Skills encode "don't forget this"
+  items that belong in the plan checklist.
+- **Reviewing a PR** that touches the matching surface. The skill doubles as a
+  review checklist.
+
+## When NOT to invoke a skill
+
+- **One-file refactors** that stay inside a single service and don't change
+  any HTTP response, Redis key, env var, or error code.
+- **Pure read tasks** — if you are asking a question about the system, go to
+  [`docs/`](README.md) directly.
+
+## Skills index file
+
+`.claude/skills/README.md` is the canonical index inside the skills directory.
+It mirrors the table above and is the entry point an agent loads at session
+start.
+
+## Adding a new skill
+
+1. Create a subdirectory under `.claude/skills/<kebab-case-name>/`.
+2. Add `SKILL.md` with frontmatter:
+
+   ```markdown
+   ---
+   name: <kebab-case-name>
+   description: <one-line trigger sentence>
+   when-to-use: <short clause — "use when adding an X or changing Y">
+   ---
+
+   # <Human-readable title>
+
+   ...procedural body with explicit steps and links into docs/...
+   ```
+3. Add a row to both this page and `.claude/skills/README.md`.
+4. Cross-link the skill from the relevant docs page so readers who reach the
+   docs first also find the skill.
+
+Keep skills **short and procedural**. If the skill grows past ~200 lines, split
+it or move the reference material into `docs/`.
+
+
+================================================================================
+FILE: .claude/skills/README.md
+================================================================================
+
+# Repo-local skills
+
+Short, procedural guides for LLM agents working in this repo. Each skill below
+routes to canonical documentation in [`docs/`](../../docs/README.md) and encodes
+workflow rules that are easy to miss on a first read of the codebase.
+
+Start by loading `docs/README.md` for orientation. Invoke a skill **before**
+making changes that match its triggers.
+
+## Available skills
+
+| Skill | When to use |
+|-------|-------------|
+| [`api-endpoint-work/SKILL.md`](api-endpoint-work/SKILL.md) | Adding, removing, or modifying any `/api/...` route, controller, request / response DTO, or error code. |
+| [`redis-schema-work/SKILL.md`](redis-schema-work/SKILL.md) | Adding or changing any Redis key — new hash field, new list, new zset, new counter, new prefix. |
+| [`storage-provider-work/SKILL.md`](storage-provider-work/SKILL.md) | Adding a new object-storage backend, changing the `ObjectStorageService` contract, or adjusting upload / signed-URL behavior. |
+
+## Canonical references for agents
+
+- [`docs/README.md`](../../docs/README.md) — documentation index
+- [`docs/architecture.md`](../../docs/architecture.md) — component view and
+  request lifecycle
+- [`docs/api/README.md`](../../docs/api/README.md) — full HTTP surface
+- [`docs/internals/redis-schema.md`](../../docs/internals/redis-schema.md) —
+  every Redis key the app touches
+- [`../../llms.txt`](../../llms.txt) — compact LLM index
+- [`../../llms-full.txt`](../../llms-full.txt) — single-file documentation bundle
+
+## How these skills work
+
+Each skill is a single `SKILL.md` with YAML frontmatter (`name`, `description`,
+`when-to-use`) followed by a procedural body. The body is deliberately terse —
+agents should rely on the linked doc pages for depth.
+
+Skills do **not** duplicate the docs. If a skill says "add an entry to the
+Redis schema table," that entry belongs in
+[`docs/internals/redis-schema.md`](../../docs/internals/redis-schema.md), not
+inside the skill.
+
+See [`docs/agent-skills.md`](../../docs/agent-skills.md) for the human-facing
+description of the skills model and how to add a new one.
+
+
+================================================================================
+FILE: .claude/skills/api-endpoint-work/SKILL.md
+================================================================================
+
+---
+name: api-endpoint-work
+description: Use when adding, removing, or modifying any /api/... HTTP endpoint, controller method, request / response DTO, or error code in SocialGraph
+when-to-use: Any change that touches src/main/java/com/intelligenta/socialgraph/controller/, exception/, or model/, or that adds or removes a row from the public surface
+---
+
+# API endpoint work
+
+The SocialGraph public HTTP surface is locked down by `ApiSurfaceRegressionTest`
+and documented endpoint-by-endpoint under `docs/api/`. Drifting any of these
+without the others is the most common way to ship a silent breakage.
+
+Use this skill **before** you start editing.
+
+## Triggers
+
+Invoke this skill if your change touches any of:
+
+- `src/main/java/com/intelligenta/socialgraph/controller/*.java`
+- `src/main/java/com/intelligenta/socialgraph/model/*.java` (request / response DTOs)
+- `src/main/java/com/intelligenta/socialgraph/exception/*.java`
+- `src/main/java/com/intelligenta/socialgraph/exception/GlobalExceptionHandler.java`
+- The `SecurityConfig` public-endpoint allowlist
+- Any `@RequestMapping` / `@GetMapping` / `@PostMapping` / `@PatchMapping` / `@DeleteMapping` annotation
+
+## Decision tree
+
+1. **Are you adding or removing an endpoint?**
+   → Yes: full checklist below. **`ApiSurfaceRegressionTest` will fail until you
+   update it.**
+   → No: skip to step 2.
+
+2. **Are you changing a response DTO field name, removing a field, or changing
+   its type?**
+   → Yes: this is a **breaking change**. It needs a changelog entry, an updated
+   API doc page, and probably a controller test update.
+   → No: continue.
+
+3. **Are you adding a new error code or changing the HTTP status of an existing one?**
+   → Yes: update `docs/api/errors.md` and the matching exception class. Touch
+   `GlobalExceptionHandler` only if you added a new exception type.
+   → No: continue.
+
+4. **Are you only changing internal logic that doesn't affect the wire?**
+   → Run the matching `<Name>ControllerTest` to confirm and you're done.
+
+## Add an endpoint — checklist
+
+- [ ] Add the method to the matching controller. Use the existing constructor
+      injection style (no field injection).
+- [ ] Use `@AuthenticationPrincipal AuthenticatedUser user` if the endpoint is
+      authenticated. Do **not** read the security context manually.
+- [ ] If the endpoint must be public, add it to **both**:
+  - `SecurityConfig.filterChain` `requestMatchers(...).permitAll()`
+  - `app.public-endpoints` in `application.yml` (documentation only, but kept in sync)
+- [ ] Add or update the request / response DTO under `model/`. Prefer
+      `record` for immutable types. Use `@JsonProperty` / `@JsonInclude`
+      annotations only when the wire name needs to differ from the field name.
+- [ ] If the input has constraints, annotate the record / DTO with
+      `jakarta.validation` annotations and use `@Valid` on the controller param.
+      Validation failures surface as `incomplete_request`.
+- [ ] Add a happy-path test to `controller/<Name>ControllerTest`. Use
+      `TestRequestPostProcessors.authenticatedUser(uid)` to inject a principal.
+- [ ] **Add the new endpoint to `ApiSurfaceRegressionTest`** in the matching
+      method group (legacy or new). The test fails build until this is done.
+- [ ] Document the endpoint on the matching `docs/api/<controller>.md` page —
+      method, path, auth, params, response shape, errors. Match the existing
+      style on that page.
+- [ ] Update `docs/api/README.md` if the new path doesn't fit an existing
+      entry in the "Full endpoint list" section.
+- [ ] If errors are new, add rows to `docs/api/errors.md`.
+- [ ] Add an entry to `CHANGELOG.md` under `[Unreleased]`.
+
+## Remove an endpoint — checklist
+
+- [ ] Delete the controller method.
+- [ ] Delete the matching `<Name>ControllerTest` test.
+- [ ] **Remove the path from `ApiSurfaceRegressionTest`** (it will hold the test
+      green only if the path is also absent from the route map). Add it to the
+      "must NOT exist" list if removal is intentional and load-bearing.
+- [ ] Delete or update the matching section in `docs/api/<controller>.md`.
+- [ ] Update `docs/api/README.md` "Full endpoint list".
+- [ ] If the endpoint was the only consumer of a DTO, delete the DTO too.
+- [ ] Add a **breaking-change** entry to `CHANGELOG.md`.
+
+## Modify a response shape — checklist
+
+- [ ] Update the DTO.
+- [ ] Update the controller test assertion for the changed field.
+- [ ] If the field is asserted by `ApiSurfaceRegressionTest` (likely true for
+      `entities`, `setType`, `actorUid`, `actorUsername`, `actionType`, `count`,
+      `duration`), update that test too.
+- [ ] Update the response shape on the matching `docs/api/<controller>.md`.
+- [ ] Add a **breaking-change** entry to `CHANGELOG.md`.
+
+## What not to do
+
+- **Do not bypass `@AuthenticationPrincipal`.** The
+  `TestAuthenticatedUserResolver` will silently fail to inject the user and your
+  test will pass against a `null` principal.
+- **Do not return raw `Map<String, Object>` for new endpoints.** The legacy
+  `Map`-returning endpoints are kept for compatibility; new endpoints should
+  return a typed DTO so future readers can find the shape.
+- **Do not add a new error response shape.** All errors must come out as
+  `ErrorResponse{error, error_description}`. If you need extra fields, raise
+  a new exception type and let `GlobalExceptionHandler` map it.
+- **Do not add a query-string token parameter.** Auth is `Authorization: Bearer`
+  only.
+
+## Canonical references
+
+- [`docs/api/README.md`](../../../docs/api/README.md)
+- [`docs/api/errors.md`](../../../docs/api/errors.md)
+- [`docs/authentication.md`](../../../docs/authentication.md)
+- [`docs/testing.md`](../../../docs/testing.md)
+- [`src/test/java/com/intelligenta/socialgraph/ApiSurfaceRegressionTest.java`](../../../src/test/java/com/intelligenta/socialgraph/ApiSurfaceRegressionTest.java)
+
+
+================================================================================
+FILE: .claude/skills/redis-schema-work/SKILL.md
+================================================================================
+
+---
+name: redis-schema-work
+description: Use when adding or changing any Redis key — new hash field, new list, new zset, new counter, new key prefix — in SocialGraph
+when-to-use: Any change that calls redisTemplate.opsForHash/Set/List/ZSet/Value with a new key shape, or modifies an existing key's structure
+---
+
+# Redis schema work
+
+Redis is the entire persistence layer for SocialGraph. Every social fact, every
+counter, every timeline view, every reaction, every block — all of it lives in
+Redis. The schema is documented exhaustively in
+[`docs/internals/redis-schema.md`](../../../docs/internals/redis-schema.md);
+that page is the single source of truth.
+
+Drifting code from the schema doc is the second most common way to ship a
+silent breakage in this repo.
+
+Use this skill **before** you start editing.
+
+## Triggers
+
+Invoke this skill if your change touches any of:
+
+- A new `redisTemplate.opsForHash().put / putAll / increment / delete`
+- A new `redisTemplate.opsForSet().add / remove / members / isMember`
+- A new `redisTemplate.opsForList().leftPush / rightPush / range / remove`
+- A new `redisTemplate.opsForZSet().add / score / reverseRange`
+- A new `redisTemplate.opsForValue().set / get` with a new key
+- A new key **prefix** (`user:...`, `post:...`, `session:...`, etc.)
+- An expansion of `Verbs.Action` (which changes `key()` and therefore the
+  reaction key shape)
+
+## Before you write code
+
+1. Read the relevant section of
+   [`docs/internals/redis-schema.md`](../../../docs/internals/redis-schema.md).
+2. Find the existing key your change relates to. Existing keys follow strong
+   conventions:
+   - **User keys are split between `user:<username>` (hash, profile fields and
+     counters) and `user:<uid>:<setname>` (set / hash / list / zset).** The
+     reverse lookup `user:uid` (hash, field=UID → value=username) bridges them.
+   - **Post keys are `post:<postId>` (hash, body) and `post:<postId>:replies`
+     (list).**
+   - **Reactions use `post:<postId><plural>:` (no colon between postId and
+     plural) for the actor list, and `post:<postId>:<actorUid>:` (hash) for the
+     reverse lookup. Do not "fix" the missing colon.**
+   - **Counters live as hash fields on the user hash** (`followers`, `following`,
+     `polyCount`) — not as standalone keys.
+   - **Timelines are three views per user**: list (FIFO), zset (personal),
+     zset (everyone). All three are written together in
+     `ShareService.addPostToTimeline`.
+3. Confirm that the new key fits one of the existing patterns. If it doesn't,
+   stop and reconsider — adding a new top-level prefix is a bigger architectural
+   change than it looks.
+
+## Decision tree
+
+1. **Is your new key a per-user attribute that other users will need to read?**
+   → Use a hash on `user:<uid>:<name>`. Don't store it on `user:<username>`
+   unless it is genuinely keyed by username (devices are the only example).
+
+2. **Is your new key a counter incremented per request?**
+   → Use a hash field on the user hash via `HINCRBY user:<username> <field>`.
+   Don't create a new key for it.
+
+3. **Is your new key a relationship between two users?**
+   → Use a set on `user:<a>:<relation>` containing UIDs of the related users,
+   with a mirror set on `user:<b>:<relation>s` for the reverse direction.
+   Follow the existing pattern of `followers / following`,
+   `blocked / blockers`, `muted / muters`.
+
+4. **Is your new key a per-user filter (block list, allow list, keyword list)?**
+   → Use a hash where field == value (the "hash-as-set" pattern). Lets you
+   `HSETNX` for idempotent adds.
+
+5. **Is your new key a fan-out destination written by a service writer?**
+   → Make sure the writer goes through a single helper (the way
+   `addPostToTimeline` is the only writer for the three timeline keys). Don't
+   spread the writes across multiple call sites.
+
+## Checklist for any schema change
+
+- [ ] Implement the read and write paths. Use a service method, not direct
+      controller-to-Redis access (the only existing exception is
+      `StatusController` for negative-keyword and image-block writes — don't
+      add new exceptions).
+- [ ] Add a service-level test that asserts the exact Redis ops (mock
+      `StringRedisTemplate` and verify `put` / `add` / `leftPush` calls with
+      the correct arguments).
+- [ ] **Update `docs/internals/redis-schema.md`** — add a row to the relevant
+      section table with the key, type, contents, and owner. If the change is
+      large enough to need its own section, add one.
+- [ ] If the key participates in timeline delivery, update
+      `docs/internals/timeline-delivery.md` (especially the consistency notes
+      and known gaps).
+- [ ] If the change affects an HTTP response or request, follow the
+      `api-endpoint-work` skill in addition.
+- [ ] Add a `CHANGELOG.md` entry.
+
+## What not to do
+
+- **Do not introduce a new top-level prefix without an entry in the schema doc.**
+  Future maintainers and operators rely on the prefix list to know what to
+  back up, what to TTL, what to migrate.
+- **Do not split state between Redis and a DTO field that gets persisted
+  separately.** Either it lives in Redis, or it doesn't exist between requests.
+- **Do not add a TTL to a "permanent" key** without flagging it in the schema
+  doc and the changelog. The only TTLs today are `tokens:<token>` and
+  `session:<uuid>`.
+- **Do not store JSON blobs in string keys when a hash will do.** It costs you
+  the ability to `HGET` individual fields and breaks all of the existing
+  patterns.
+- **Do not store devices, timelines, or any other UID-keyed structure under
+  `user:<username>:...`.** The `user:<username>:devices` key is a legacy
+  exception — do not add to that pattern.
+
+## Canonical references
+
+- [`docs/internals/redis-schema.md`](../../../docs/internals/redis-schema.md)
+- [`docs/internals/timeline-delivery.md`](../../../docs/internals/timeline-delivery.md)
+- [`docs/internals/security-filter.md`](../../../docs/internals/security-filter.md)
+  (token + user:uid lookups)
+- [`docs/architecture.md`](../../../docs/architecture.md)
+
+
+================================================================================
+FILE: .claude/skills/storage-provider-work/SKILL.md
+================================================================================
+
+---
+name: storage-provider-work
+description: Use when adding a new object-storage backend, changing the ObjectStorageService contract, or adjusting upload / signed-URL behavior in SocialGraph
+when-to-use: Any change that touches service/storage/, StorageProperties, or the StorageController upload paths
+---
+
+# Storage provider work
+
+SocialGraph uses one `ObjectStorageService` at a time, picked at startup by
+`storage.provider`. Three implementations exist today: Azure Blob, Google Cloud
+Storage, and OCI Object Storage. The contract is small and the abstraction is
+deliberate — additions should slot in without changing callers.
+
+Authoritative reference:
+[`docs/internals/storage-providers.md`](../../../docs/internals/storage-providers.md).
+
+## Triggers
+
+Invoke this skill if your change touches any of:
+
+- `src/main/java/com/intelligenta/socialgraph/service/storage/*.java`
+- `src/main/java/com/intelligenta/socialgraph/config/StorageProperties.java`
+- `src/main/java/com/intelligenta/socialgraph/controller/StorageController.java`
+- The `storage.*` block in `src/main/resources/application.yml`
+- `LiquidRescaler` / `ImagePayloads` if your change affects what bytes reach
+  the storage layer
+
+## Before you write code
+
+1. Read
+   [`docs/internals/storage-providers.md`](../../../docs/internals/storage-providers.md)
+   end to end.
+2. Read
+   [`docs/internals/image-pipeline.md`](../../../docs/internals/image-pipeline.md).
+3. Confirm the change really needs a new provider or contract change. Often
+   what looks like a provider concern is actually an `ImagePayloads` /
+   `LiquidRescaler` change.
+
+## Decision tree
+
+1. **Adding a new provider (e.g. AWS S3)?** → "Add a new provider" checklist below.
+2. **Changing how an existing provider creates signed URLs?** → "Modify a
+   provider" checklist.
+3. **Changing the `ObjectStorageService` contract** (new method, new
+   parameter)? → "Change the contract" checklist.
+4. **Changing what's uploaded** (rescale parameters, image format support)?
+   → This is `ImagePayloads` / `LiquidRescaler` work. Stay in the image
+   pipeline page; the storage provider should not need changes.
+
+## Add a new provider — checklist
+
+- [ ] Create
+      `src/main/java/com/intelligenta/socialgraph/service/storage/<Name>ObjectStorageService.java`
+      extending `AbstractObjectStorageService`.
+- [ ] Annotate with:
+      ```java
+      @Service
+      @ConditionalOnProperty(prefix = "storage", name = "provider", havingValue = "<name>")
+      ```
+      Only one provider should ever set `matchIfMissing = true` — that is Azure
+      today. **Do not** set it on a new provider.
+- [ ] Implement `provider()`, `createSignedUploadTarget`, `upload`, and
+      `download`. Reuse `nextObjectKey` and `encodeObjectKey` from
+      `AbstractObjectStorageService` for object keys.
+- [ ] Use `@PostConstruct` for client init. Wrap it in try/catch and log a
+      warning on failure — the existing providers leave the bean in the
+      context with a null client and throw `storage_unavailable` lazily.
+      Match this pattern unless you have a reason not to.
+- [ ] Add a nested properties class to
+      [`StorageProperties`](../../../src/main/java/com/intelligenta/socialgraph/config/StorageProperties.java),
+      e.g. `S3` with `bucketName`, `region`, etc. Add the standard
+      getters/setters (the class uses Spring Boot
+      `@ConfigurationProperties`).
+- [ ] Add a `storage.<name>.*` block to
+      [`application.yml`](../../../src/main/resources/application.yml) with
+      `${ENV_VAR:default}` placeholders. Match the existing `storage.azure`,
+      `storage.gcp`, `storage.oci` style.
+- [ ] Add the SDK dependency to `pom.xml`. Pin a version. Avoid pulling in a
+      whole BOM if a single artifact will do.
+- [ ] Add a unit test under
+      `src/test/java/com/intelligenta/socialgraph/service/storage/` with a
+      mocked SDK client, covering `nextObjectKey` formatting, signed-URL
+      headers, and the `storage_unavailable` path.
+- [ ] If you can stand up a real client in tests (e.g. via Testcontainers),
+      add an integration-flavored test under the same package.
+- [ ] **Update [`docs/internals/storage-providers.md`](../../../docs/internals/storage-providers.md)**:
+      add a new section under "## <Name>" mirroring the structure of the
+      existing Azure / GCP / OCI sections.
+- [ ] **Update [`docs/configuration.md`](../../../docs/configuration.md)**: add
+      a row group under "## <Name>" with every env var and its purpose.
+- [ ] **Update [`docs/api/storage.md`](../../../docs/api/storage.md)**: add the
+      provider to the "Provider-specific shape" list under
+      `POST /api/request/storage/key`.
+- [ ] Add a row to the `pom.xml` dependency list note in `README.md` if you
+      maintain one (currently not required).
+- [ ] Add a `CHANGELOG.md` entry.
+
+## Modify a provider — checklist
+
+- [ ] Make the change. If you altered signed-URL parameters, update the
+      `Headers` map returned by `createSignedUploadTarget` so callers know
+      what to send.
+- [ ] Update the matching section of
+      [`docs/internals/storage-providers.md`](../../../docs/internals/storage-providers.md).
+- [ ] Update the unit test — assert the new headers / parameters.
+- [ ] If `expiresIn` semantics change (e.g. you stop honoring
+      `signedUrlTtlSeconds`), document that explicitly in
+      [`docs/configuration.md`](../../../docs/configuration.md) and the
+      changelog.
+
+## Change the contract — checklist
+
+- [ ] Update
+      [`ObjectStorageService.java`](../../../src/main/java/com/intelligenta/socialgraph/service/storage/ObjectStorageService.java).
+- [ ] Update **all three** existing implementations
+      (`AzureObjectStorageService`, `GcpObjectStorageService`,
+      `OciObjectStorageService`) plus
+      [`AbstractObjectStorageService`](../../../src/main/java/com/intelligenta/socialgraph/service/storage/AbstractObjectStorageService.java)
+      if the helper signatures change.
+- [ ] Update every caller. Today the callers are:
+  - `StorageController.requestStorageKey` — `createSignedUploadTarget`
+  - `StorageController.uploadWithRescale` — `upload`
+  - `ShareService.sharePhoto(uid, content, bytes, contentType)` — `upload`
+  No code currently calls `download`; if you're removing it, do so.
+- [ ] Update
+      [`docs/internals/storage-providers.md`](../../../docs/internals/storage-providers.md)
+      "Interface" section.
+- [ ] Run `./mvnw test`. The provider tests will catch most call-site issues.
+- [ ] **Breaking-change** entry in `CHANGELOG.md`.
+
+## What not to do
+
+- **Do not bypass `AbstractObjectStorageService.nextObjectKey`.** It enforces
+  the prefix and extension conventions; subverting it breaks the
+  download / read paths in subtle ways.
+- **Do not return a provider-specific `StorageUploadTarget`.** The DTO is
+  intentionally generic. If a provider needs extra metadata, add it to the
+  generic DTO and document that it is provider-specific.
+- **Do not call the SDK client without a null check.** Every provider's
+  `init()` swallows failures and leaves the client null on purpose so the app
+  comes up. Reach the client only via an `ensureXxx()` guard that throws
+  `storage_unavailable`.
+- **Do not pull SDK transitive dependencies that pin Jackson, Netty, or Lettuce
+  versions.** Spring Boot 4 + Java 25 + Lettuce + the existing SDK trio is
+  fragile; check `./mvnw dependency:tree` after adding a new SDK.
+
+## Canonical references
+
+- [`docs/internals/storage-providers.md`](../../../docs/internals/storage-providers.md)
+- [`docs/internals/image-pipeline.md`](../../../docs/internals/image-pipeline.md)
+- [`docs/api/storage.md`](../../../docs/api/storage.md)
+- [`docs/configuration.md`](../../../docs/configuration.md)
+- [`src/main/java/com/intelligenta/socialgraph/service/storage/`](../../../src/main/java/com/intelligenta/socialgraph/service/storage/)

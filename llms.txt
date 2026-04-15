@@ -1,0 +1,70 @@
+# SocialGraph
+
+> SocialGraph is a Spring Boot 4 / Java 25 social graph REST API. It uses Redis
+> as its sole persistence layer (users, posts, tokens, timelines, reactions,
+> follow / block / mute graph, counters) and a pluggable object store
+> (Azure Blob, Google Cloud Storage, or OCI Object Storage) for media.
+>
+> All HTTP endpoints live under `/api`. Auth is stateless Bearer tokens stored
+> at Redis key `tokens:<token>`. The full documentation set lives under
+> `docs/`. The complete single-file bundle is `llms-full.txt`.
+
+## Start here
+
+- [README](README.md): product story, install, quickstart, repo layout, links.
+- [docs/README.md](docs/README.md): documentation index, routes the reader by need.
+- [llms-full.txt](llms-full.txt): single-file bundle of all canonical docs for ingestion.
+
+## Getting started
+
+- [docs/getting-started.md](docs/getting-started.md): prerequisites (Java 25, Maven, Redis, a storage provider), build, run, smoke test, and how to run `./mvnw test`.
+- [docs/configuration.md](docs/configuration.md): every `application.yml` field and every environment variable, grouped by subsystem.
+
+## How the system works
+
+- [docs/architecture.md](docs/architecture.md): layered view (controllers → services → Redis + object storage), Mermaid runtime diagram, request lifecycle, and the write / read paths for posts and timelines.
+- [docs/authentication.md](docs/authentication.md): stateless Bearer-token model, public vs. authenticated endpoints, `TokenAuthenticationFilter` filter chain, password hashing, RSA session bootstrap.
+
+## API reference
+
+- [docs/api/README.md](docs/api/README.md): full endpoint list (51 routes under `/api`), conventions, shared DTO shapes.
+- [docs/api/auth.md](docs/api/auth.md): `/api/login`, `/api/register`, `/api/activate`, `/api/session`, `/api/ping` — all public.
+- [docs/api/users.md](docs/api/users.md): follow / unfollow, block / unblock, mute / unmute, profile read / update, search, RSA public keys, member lists.
+- [docs/api/actions.md](docs/api/actions.md): like, love, fav, share — get / do / undo per verb.
+- [docs/api/status.md](docs/api/status.md): post (text / photo / video), reply, reshare, edit, delete; devices; negative keywords; image blocks.
+- [docs/api/timeline.md](docs/api/timeline.md): FIFO, personal-importance, and global-importance timelines.
+- [docs/api/storage.md](docs/api/storage.md): signed upload target, liquid-rescale upload.
+- [docs/api/errors.md](docs/api/errors.md): every error code, the typed exception that produces it, and the HTTP status it maps to.
+
+## Internals
+
+- [docs/internals/redis-schema.md](docs/internals/redis-schema.md): every Redis key the app touches, by section (users, follow graph, posts, reactions, timelines, sessions, counters, devices, content filters), with a read / write ownership table.
+- [docs/internals/timeline-delivery.md](docs/internals/timeline-delivery.md): the `pushGraph` write-time fan-out, the four delivery filters, the three timeline representations, and the read-time filter reapplication.
+- [docs/internals/storage-providers.md](docs/internals/storage-providers.md): `ObjectStorageService` contract, `@ConditionalOnProperty`-based provider selection, and the Azure / GCP / OCI implementations side by side.
+- [docs/internals/image-pipeline.md](docs/internals/image-pipeline.md): `ImagePayloads` MIME detection (JPEG / PNG / WebP) plus `LiquidRescaler` seam carving and how `POST /api/lq/upload` wires them.
+- [docs/internals/security-filter.md](docs/internals/security-filter.md): `TokenAuthenticationFilter` step-by-step, including the `polyCount` side effect and known cost.
+
+## Testing
+
+- [docs/testing.md](docs/testing.md): test layout, what `ApiSurfaceRegressionTest` enforces, how controller tests inject `@AuthenticationPrincipal`, how to run a single test.
+
+## For LLM agents working in this repo
+
+- [docs/agent-skills.md](docs/agent-skills.md): index of the repo-local agent skills under `.claude/skills/` and when to invoke each one.
+- [.claude/skills/README.md](.claude/skills/README.md): the skills directory's own index.
+- [.claude/skills/api-endpoint-work/SKILL.md](.claude/skills/api-endpoint-work/SKILL.md): use when adding, removing, or modifying any `/api/...` route, controller, request / response DTO, or error code.
+- [.claude/skills/redis-schema-work/SKILL.md](.claude/skills/redis-schema-work/SKILL.md): use when adding or changing any Redis key — new hash field, new list, new zset, new counter, new prefix.
+- [.claude/skills/storage-provider-work/SKILL.md](.claude/skills/storage-provider-work/SKILL.md): use when adding a new object-storage backend, changing the `ObjectStorageService` contract, or adjusting upload / signed-URL behavior.
+
+## History
+
+- [CHANGELOG.md](CHANGELOG.md): append-only history. The most recent entry covers the Java 25 / Spring Boot 4 migration from the legacy Spark / Couchbase codebase, including the breaking-change list (Bearer tokens required, response shapes standardized, legacy advanced-auth helpers removed).
+
+## Important rules for agents
+
+1. The **40-endpoint public surface** is locked down by `ApiSurfaceRegressionTest`. Adding or removing an endpoint requires updating that test in the same change.
+2. **All errors** must come out as `{ "error": "<code>", "error_description": "<msg>" }`. Use a typed exception from `exception/` and let `GlobalExceptionHandler` map it.
+3. **Auth is `Authorization: Bearer <token>` only.** Do not add query-string token parameters.
+4. **Public endpoints** are hardcoded in `SecurityConfig.filterChain`: `/api/login`, `/api/register`, `/api/ping`, `/api/session`, `/api/activate`. The mirrored `app.public-endpoints` in `application.yml` is documentation only.
+5. **The reaction key suffix has no colon between postId and the verb plural** (`post:<id>likes:`, not `post:<id>:likes:`). This is intentional — see `Verbs.Action.key()`.
+6. **Devices are keyed by username**, everything else by UID. Don't add to the username pattern.
