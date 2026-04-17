@@ -43,16 +43,35 @@ Creates a new post. The payload shape depends on `type`.
 
 ### `POST /api/status` — behavior matrix
 
-| `type`  | Body                  | Notes |
-|---------|-----------------------|-------|
-| `text`  | ignored               | `content` is required, must not be blank. |
-| `photo` | `url` present         | URL stored as-is; no upload. |
-| `photo` | raw image bytes       | Uploaded via `ObjectStorageService.upload`; MIME detected. |
-| `photo` | neither               | 400. |
-| `video` | `url` required        | URL stored as-is; no upload. |
+| `type`  | Body                      | Notes |
+|---------|---------------------------|-------|
+| `text`  | ignored                   | `content` is required, must not be blank. |
+| `photo` | `url` present             | URL stored as-is; no upload. |
+| `photo` | raw image bytes           | Uploaded via `ObjectStorageService.upload`; MIME detected. |
+| `photo` | multipart `files[]`       | Up to `embedding.max-images-per-post` images (default 10); each uploaded in order, first one stored in the legacy `url` field, and the full list available on `TimelineEntry.imageUrls`. |
+| `photo` | neither                   | 400. |
+| `video` | `url` required            | URL stored as-is; no upload. |
 
 See [timeline delivery](../internals/timeline-delivery.md) for what happens
 after the post is stored.
+
+### Multi-image photo posts — multipart/form-data
+
+To attach multiple images in a single post, use `multipart/form-data`:
+
+```bash
+curl -X POST http://localhost:4567/api/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "type=photo" \
+  -F "content=sunset at the pier" \
+  -F "files=@pier1.jpg" \
+  -F "files=@pier2.jpg" \
+  -F "files=@pier3.jpg"
+```
+
+- **Limit.** At most `embedding.max-images-per-post` images (default 10). Over-cap requests fail with `400`.
+- **Response.** Same map shape as the single-image response (`id`, `type`, `uid`, `content`, `url`, `created`, `duration`) plus `imageCount` indicating how many images were stored. The primary `url` field is populated with the first uploaded image URL for backwards compatibility; the full ordered list is available on `TimelineEntry.imageUrls` when the post is later read through timeline / `GET /api/posts/{postId}` endpoints.
+- **Embedding pipeline.** The first 5 images and the caption are sent to the Rust embedding sidecar for a Gemma visual summary; the first image + that summary is fused into a SigLIP-2 combined vector and the caption alone becomes a SigLIP-2 text vector. Both vectors are KNN-indexed so the post is searchable via `/api/search/question` (multimodal) and `/api/search/ai` (text-only). See [search.md](search.md) and [redis-schema.md § Vector search](../internals/redis-schema.md#vector-search).
 
 ## Reading posts
 

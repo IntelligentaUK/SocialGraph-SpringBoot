@@ -5,14 +5,39 @@ release. Unreleased work sits at the top.
 
 ## [Unreleased]
 
+### Added
+
+- **Multimodal vector search** — SigLIP-2 + Gemma VLM powered retrieval over the last 7 days of posts.
+  - Two endpoints: `POST /api/search/question` (multimodal, ranks image + Gemma summary fused vectors) and `POST /api/search/ai` (text-only, ranks SigLIP-2 caption embeddings). Both accept `{query, limit?}`, return `{results, count, durationMs}` with typed `SearchResult` records.
+  - Rust sidecar (`embedding-sidecar/`, axum + candle) exposes `/summarize`, `/embed/text`, `/embed/image-text`, `/healthz`. Ships with deterministic stub models (default build) and a `models` feature flag for the real candle-backed loaders — lets the rest of the stack be exercised without downloading ~20 GB of weights.
+  - Async embedding pipeline via Redis Streams: `ShareService.createStatusUpdate` XADDs each new post (except videos and empty posts) to `embedding:queue`; `EmbeddingWorker` consumes via `XREADGROUP` and HSETs `embedding:post:<id>` hashes with an 8-day TTL. Failures retry up to 3× before being redirected to `embedding:queue:dlq`.
+  - RediSearch HNSW index (`idx:post:embedding`) with COSINE distance, 1152-dim FLOAT32, author_uid TAG, created NUMERIC SORTABLE. Created idempotently at startup by `RedisSearchIndexInitializer`.
+- **Multi-image posts.** `POST /api/status` now accepts `multipart/form-data` with a `files[]` field; up to `embedding.max-images-per-post` (default 10) images are uploaded per post. Stored as an ordered list at `post:<id>:images` with a new `imageCount` field on the post hash. `TimelineEntry.imageUrls` carries the full ordered list; legacy single-image posts (no `imageCount`) are backfilled on read to `[url]`.
+
 ### Changed
 
+- **Redis Stack is required.** The plain `redis` image no longer works — RediSearch is mandatory for vector search. A `docker-compose.yml` at repo root brings up `redis/redis-stack-server:7.4.0-v0` (and, under the `sidecar` profile, the embedding sidecar).
+- **Dev docker command.** `docker run ... redis:trixie` → `docker compose up -d redis`. `docs/getting-started.md` and `README.md` updated.
 - **Initial deep documentation pass.** Added the `docs/` tree (getting started,
   configuration, architecture, authentication, per-controller API reference, Redis
   internals, storage providers, image pipeline, testing, agent skills), a new
   top-level README that matches the current Spring Boot product, `llms.txt` and
   `llms-full.txt` for LLM consumers, this changelog, and repo-local agent skills
   under `.claude/skills/`. No behavior changes.
+
+### Breaking changes
+
+- **Dev Redis image.** `redis:trixie` → `redis/redis-stack-server:7.4.0-v0`. Without the `search` module loaded, app startup fails fast with a clear message.
+- **`ShareService` constructor** now requires an `EmbeddingProperties` dependency. Downstream code that constructs this service by hand needs updating.
+
+### Environment variables (new)
+
+`EMBEDDING_SIDECAR_URL` (default `http://localhost:8000`), plus every `embedding.*` key in `application.yml` is env-overridable (uppercased, hyphens → underscores). Sidecar-side: `SIDECAR_PORT`, `MODEL_CACHE_DIR`, `HF_TOKEN`, `MAX_IMAGES_PER_REQUEST`, `IMAGE_FETCH_TIMEOUT_S`, `MAX_IMAGE_BYTES`, `SIGLIP_MODEL_ID`, `GEMMA_MODEL_ID`, `VECTOR_DIM`, `RUST_LOG`.
+
+### Verification
+
+- `./mvnw test` — 117 JUnit tests including Testcontainers-backed RediSearch integration (`RedisSearchIndexInitializerTest`, `VectorSearchServiceTest`) and MockRestServiceServer-backed `EmbeddingClientTest`.
+- `cargo test` (in `embedding-sidecar/`) — 13 tests across unit (stub vectors unit-norm / deterministic / differs-by-input; Gemma template) and axum integration smoke.
 
 ## 1.0-SNAPSHOT — Java 25 / Spring Boot 4 migration
 

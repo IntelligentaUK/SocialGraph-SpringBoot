@@ -20,7 +20,10 @@ name used at runtime (not the YAML path) unless otherwise noted.
 ## Redis
 
 Redis holds all social state (users, posts, tokens, timelines, reactions, blocks,
-mutes, counters, etc.). A Redis instance is required.
+mutes, counters, etc.). **Redis Stack 7.2+** is required — the `search` module
+is used by the vector-search endpoints. The project's `docker-compose.yml`
+brings up `redis/redis-stack-server:7.4.0-v0`; the plain `redis` image does not
+work.
 
 
 | Variable         | Default     | Purpose                          |
@@ -134,6 +137,30 @@ These live under the `app.`* YAML prefix and are bound to
 | `app.security.token-expiration-seconds` | `86400`                                                               | TTL (seconds) for every issued Bearer token. Applied to the `tokens:<token>` Redis key at write time.                                                                                                           |
 | `app.public-endpoints`                  | `[/api/login, /api/register, /api/ping, /api/session, /api/activate]` | Reference list of public endpoints. `SecurityConfig` does **not** read this list at runtime — it hardcodes the same set in the filter chain. The YAML list is present for documentation and future refactoring. |
 
+
+## Vector embedding pipeline
+
+The `embedding.*` block in `application.yml` configures the sidecar URL,
+timeouts, dimensions, multi-image limits, and search-window. Every field is
+environment-overridable (uppercase with hyphens turned into underscores, e.g.
+`embedding.sidecar-url` -> `EMBEDDING_SIDECAR_URL`).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `EMBEDDING_SIDECAR_URL` | `http://localhost:8000` | Base URL of the Rust sidecar |
+| `EMBEDDING_SUMMARIZE_TIMEOUT_MS` | `30000` | Read timeout for `/summarize` (Gemma VLM can be slow) |
+| `EMBEDDING_EMBED_TIMEOUT_MS` | `15000` | Read timeout for `/embed/*` |
+| `EMBEDDING_VECTOR_DIM` | `1152` | SigLIP-2 giant projection dim. Changing this requires dropping and recreating `idx:post:embedding` |
+| `EMBEDDING_MAX_IMAGES_PER_POST` | `10` | Hard cap enforced at `POST /api/status` for multipart uploads |
+| `EMBEDDING_IMAGES_FOR_EMBEDDING` | `5` | First N images passed to Gemma for the visual summary |
+| `EMBEDDING_SEARCH_WINDOW_DAYS` | `7` | Only posts created within this many days are returned by `/api/search/*` |
+| `EMBEDDING_DLQ_MAX_RETRIES` | `3` | EmbeddingWorker retries a failing message this many times before DLQing |
+| `EMBEDDING_EMBEDDING_TTL_SECONDS` | `691200` (8 d) | TTL on `embedding:post:<id>` — must be ≥ `search-window-days` |
+| `EMBEDDING_SEARCH_LIMIT_DEFAULT` | `20` | Default `limit` when missing from the request body |
+| `EMBEDDING_SEARCH_LIMIT_MAX` | `100` | Hard cap on requested `limit` |
+
+The Rust sidecar reads its own env vars — see
+[`embedding-sidecar/README.md`](../embedding-sidecar/README.md).
 
 ## Logging
 

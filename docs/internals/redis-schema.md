@@ -53,15 +53,21 @@ decrementing both users' counters. `unblock` reverses only the block set members
 
 | Key | Type | Fields / contents | Owner |
 |-----|------|-------------------|-------|
-| `post:<postId>` | hash | `id`, `type`, `uid` (author UID), `created`, `content`, `url`, `imageHash`, `parentId` (reply), `sharedPostId` (reshare), `updated` (edit), `md5` (legacy alias for `imageHash`) | `ShareService` |
+| `post:<postId>` | hash | `id`, `type`, `uid` (author UID), `created`, `content`, `url`, `imageHash`, `imageCount`, `parentId` (reply), `sharedPostId` (reshare), `updated` (edit), `md5` (legacy alias for `imageHash`) | `ShareService` |
 | `post:<postId>:replies` | list | reply post IDs (newest-first via `LPUSH`) | `ShareService.createStatusUpdate` |
+| `post:<postId>:images` | list | image URLs in author-posted order (`RPUSH`ed, read via `LRANGE 0 -1`) | `ShareService.sharePhotos` |
 
 Post types in `type`: `text`, `photo`, `video`, `reply`, `reshare`.
 
 `imageHash` is MD5 of the original uploaded image bytes, used for
 image-block filtering. Legacy posts may carry it under `md5`; both
 `ShareService.readImageHash` and `TimelineService.generatePost` check both field
-names.
+names. For multi-image posts `imageHash` stores the MD5 of the **first** image.
+
+`imageCount` is the decimal count of URLs in `post:<postId>:images`. Legacy
+single-image posts created before multi-image support do not carry this field;
+read-side code (`TimelineService.generatePost`) treats its absence as "1 if
+`url` is set, else 0" and falls back to `[url]` as the `imageUrls` response.
 
 ## Reactions
 
@@ -156,6 +162,58 @@ Both are queried at delivery time (`ShareService.shouldDeliver`) and at read
 time (`TimelineService.generatePost`). The hash-as-set pattern is intentional —
 `HSETNX` is O(1) and lets `POST /api/add/keyword/negative` return whether the
 keyword was new without an extra `EXISTS` round trip.
+
+## Vector search
+
+SocialGraph hosts two RediSearch vector indexes used by `/api/search/question`
+and `/api/search/ai`. This is the only feature in the repo that requires
+**Redis Stack** (the base `redis` image does not ship the `search` module and
+`RedisSearchIndexInitializer` will fail startup with a clear error).
+
+### Async pipeline
+
+| Key | Type | Fields / contents | Owner | TTL |
+|-----|------|-------------------|-------|-----|
+| `embedding:queue` | stream | `postId`, `authorUid` | `ShareService.createStatusUpdate` (produce), `EmbeddingWorker` (consume) | — |
+| `embedding:queue:dlq` | stream | `postId`, `authorUid`, `failure`, `message`, `attempts` | `EmbeddingWorker.onFailure` | — |
+
+`ShareService` XADDs each new post (except videos and fully-empty posts) to
+`embedding:queue` after the post's creation transaction commits.
+`EmbeddingWorker` is a `@Component` with a daemon thread that joins the
+`embed-workers` consumer group and blocks on `XREADGROUP ... BLOCK 5000 COUNT 10`.
+For each message it calls the Rust sidecar (`/summarize` + `/embed/image-text`
++ `/embed/text`), writes the result to `embedding:post:<postId>`, and `XACK`s.
+Failed messages are retried (in-memory counter); on the Nth failure
+(`embedding.dlq-max-retries`, default 3) they're redirected to
+`embedding:queue:dlq` and `XACK`ed on the main stream.
+
+### Embedding records and index
+
+| Key | Type | Fields / contents | Owner | TTL |
+|-----|------|-------------------|-------|-----|
+| `embedding:post:<postId>` | hash | `author_uid` (UTF-8), `created` (UTF-8 unix seconds), `combined_vec` (binary: 1152 × float32 LE = 4608 bytes; omitted for text-only posts), `text_vec` (binary: 4608 bytes), `gemma_summary` (UTF-8) | `EmbeddingWorker.process` | **691 200 s (8 days)** |
+| `idx:post:embedding` | RediSearch index over prefix `embedding:post:` | see schema below | `RedisSearchIndexInitializer` | — |
+
+```
+FT.CREATE idx:post:embedding ON HASH PREFIX 1 embedding:post: SCHEMA
+  author_uid TAG
+  created NUMERIC SORTABLE
+  combined_vec VECTOR HNSW 6 TYPE FLOAT32 DIM 1152 DISTANCE_METRIC COSINE
+  text_vec     VECTOR HNSW 6 TYPE FLOAT32 DIM 1152 DISTANCE_METRIC COSINE
+```
+
+The 8-day TTL on `embedding:post:<postId>` gives a 1-day buffer past the
+7-day query window; RediSearch auto-removes expired hash keys from the index,
+so no cron job is required. Inserting a vector with dimension ≠ 1152 fails at
+write time, not query time — `VectorSearchService` always passes a 1152-dim
+query vector from SigLIP-2.
+
+> Note the TTL. Every other post-adjacent key in this schema is permanent
+> (posts, replies, timelines, actions, etc.). `embedding:post:*` is the only
+> key family in SocialGraph with a wall-clock expiry. Consumers that need to
+> resurface old posts must re-create the embedding by XADDing a fresh event
+> to `embedding:queue` (e.g. a backfill runner) — it is NOT sufficient to
+> reset the TTL on an existing key.
 
 ## Read / write ownership
 

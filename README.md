@@ -58,6 +58,43 @@ curl -X POST "http://localhost:4567/api/register?username=alice&password=hunter2
 
 Full install, configuration, and run instructions: [docs/getting-started.md](docs/getting-started.md).
 
+## Verifying vector search
+
+```bash
+# 1. Bring up Redis Stack + the embedding sidecar.
+docker compose --profile sidecar up -d
+curl -fsS http://localhost:8000/healthz   # -> {"status":"ok"} once both models are loaded
+                                          # (default build uses stub models; instant)
+
+# 2. Register and grab a token.
+TOKEN=$(curl -s -X POST "http://localhost:4567/api/register?username=alice&password=hunter2&email=alice@example.com" | jq -r .token)
+
+# 3. Post a multi-image photo status.
+curl -X POST http://localhost:4567/api/status \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "type=photo" -F "content=sunset at the pier" \
+  -F "files=@./fixtures/pier1.jpg" -F "files=@./fixtures/pier2.jpg"
+
+# 4. Wait a second for EmbeddingWorker to finish, then verify the embedding hash exists.
+sleep 2
+POST_ID=<id-from-step-3>
+redis-cli EXISTS embedding:post:$POST_ID    # -> 1
+redis-cli FT.INFO idx:post:embedding        # num_docs should increment
+
+# 5. Query.
+curl -X POST http://localhost:4567/api/search/question \
+    -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"query":"waterfront at dusk","limit":10}' | jq
+curl -X POST http://localhost:4567/api/search/ai \
+    -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"query":"pier","limit":10}' | jq
+```
+
+The default sidecar build uses **stub** models (deterministic unit-norm vectors
+seeded off the input hash) so the full pipeline is exercisable locally without
+any model download. Rebuild the sidecar with the `models` feature to swap in
+real candle-backed SigLIP-2 + Gemma loaders.
+
 ## Documentation
 
 The complete documentation set lives under `[docs/](docs/README.md)`:

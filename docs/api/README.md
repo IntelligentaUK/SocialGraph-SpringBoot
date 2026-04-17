@@ -16,6 +16,7 @@ Base URL in development: `http://localhost:4567`.
 | Status | [status.md](status.md) | post / read / reply / reshare / edit / delete, content filters, device list |
 | Timeline | [timeline.md](timeline.md) | FIFO, personal, everyone |
 | Storage | [storage.md](storage.md) | signed upload target, liquid-rescale upload |
+| Search | [search.md](search.md) | vector search (`/api/search/question`, `/api/search/ai`) over the last 7 days |
 
 ## Full endpoint list
 
@@ -75,6 +76,8 @@ Authenticated (`Authorization: Bearer <token>` required):
 - `GET  /api/timeline`
 - `GET  /api/timeline/personal`
 - `GET  /api/timeline/everyone`
+- `POST /api/search/question`
+- `POST /api/search/ai`
 
 ## Conventions
 
@@ -98,7 +101,7 @@ Authenticated (`Authorization: Bearer <token>` required):
 - `AuthResponse` — `{username, token, uid, expires_in, followers, following, activation_token?}`
 - `MemberInfo` — `{uid, username, fullname}`
 - `MembersResponse` — `{setType, members: MemberInfo[], count, duration}`
-- `TimelineEntry` — `{uuid, type, content?, url?, created, updated?, parentUuid?, sharedPostUuid?, actorUid, actorUsername, actorFullname}`
+- `TimelineEntry` — `{uuid, type, content?, url?, imageUrls?, created, updated?, parentUuid?, sharedPostUuid?, actorUid, actorUsername, actorFullname}`
 - `TimelineResponse` — `{entities: TimelineEntry[], count, duration}`
 - `ActionActor` — `{"@type": "person", uuid, username, displayName}`
 - `ActionResponse` — `{actionType, object, actors: ActionActor[], count, duration}`
