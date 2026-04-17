@@ -1,11 +1,13 @@
 package com.intelligenta.socialgraph.controller;
 
+import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import com.intelligenta.socialgraph.model.TimelineEntry;
 import com.intelligenta.socialgraph.model.TimelineResponse;
 import com.intelligenta.socialgraph.service.ShareService;
 import com.intelligenta.socialgraph.service.TimelineService;
 import com.intelligenta.socialgraph.support.TestAuthenticatedUserResolver;
 import com.intelligenta.socialgraph.support.TestRequestPostProcessors;
+import org.springframework.mock.web.MockMultipartFile;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,12 +22,16 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.Map;
 import java.util.Set;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -50,12 +56,14 @@ class StatusControllerTest {
     private HashOperations<String, Object, Object> hashOperations;
 
     private MockMvc mockMvc;
+    private EmbeddingProperties embeddingProperties;
 
     @BeforeEach
     void setUp() {
         lenient().when(redisTemplate.opsForSet()).thenReturn(setOperations);
         lenient().when(redisTemplate.opsForHash()).thenReturn(hashOperations);
-        mockMvc = MockMvcBuilders.standaloneSetup(new StatusController(shareService, timelineService, redisTemplate))
+        embeddingProperties = new EmbeddingProperties();
+        mockMvc = MockMvcBuilders.standaloneSetup(new StatusController(shareService, timelineService, redisTemplate, embeddingProperties))
             .setCustomArgumentResolvers(new TestAuthenticatedUserResolver())
             .build();
     }
@@ -171,5 +179,58 @@ class StatusControllerTest {
 
         mockMvc.perform(post("/api/add/image/block").with(TestRequestPostProcessors.authenticatedUser("viewer-uid")))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void postStatusMultipartDelegatesToSharePhotos() throws Exception {
+        byte[] pngA = tinyPng();
+        byte[] pngB = tinyPng();
+        MockMultipartFile f1 = new MockMultipartFile("files", "a.png", "image/png", pngA);
+        MockMultipartFile f2 = new MockMultipartFile("files", "b.png", "image/png", pngB);
+
+        when(shareService.sharePhotos(eq("viewer-uid"), eq("caption"), anyList(), anyList()))
+            .thenReturn(Map.of("type", "photo", "url", "https://cdn.example/a.png", "imageCount", "2"));
+
+        mockMvc.perform(multipart("/api/status")
+                .file(f1).file(f2)
+                .param("type", "photo")
+                .param("content", "caption")
+                .with(TestRequestPostProcessors.authenticatedUser("viewer-uid")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.type").value("photo"))
+            .andExpect(jsonPath("$.imageCount").value("2"));
+
+        verify(shareService).sharePhotos(eq("viewer-uid"), eq("caption"), anyList(), anyList());
+    }
+
+    @Test
+    void postStatusMultipartRejectsNonPhotoType() throws Exception {
+        MockMultipartFile f = new MockMultipartFile("files", "a.png", "image/png", tinyPng());
+        mockMvc.perform(multipart("/api/status")
+                .file(f)
+                .param("type", "text")
+                .with(TestRequestPostProcessors.authenticatedUser("viewer-uid")))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void postStatusMultipartRejectsWhenOverMaxImages() throws Exception {
+        embeddingProperties.setMaxImagesPerPost(3);
+        var builder = multipart("/api/status");
+        for (int i = 0; i < 4; i++) {
+            builder = builder.file(new MockMultipartFile("files", "x.png", "image/png", tinyPng()));
+        }
+        mockMvc.perform(builder
+                .param("type", "photo")
+                .with(TestRequestPostProcessors.authenticatedUser("viewer-uid")))
+            .andExpect(status().isBadRequest());
+    }
+
+    private static byte[] tinyPng() throws Exception {
+        java.awt.image.BufferedImage image =
+            new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", out);
+        return out.toByteArray();
     }
 }

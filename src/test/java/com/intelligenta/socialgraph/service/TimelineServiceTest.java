@@ -108,6 +108,58 @@ class TimelineServiceTest {
     }
 
     @Test
+    void generatePostPopulatesImageUrlsFromImagesList() {
+        LinkedHashMap<Object, Object> post = new LinkedHashMap<>();
+        post.put("id", "post-multi");
+        post.put("uid", "actor-m");
+        post.put("type", "photo");
+        post.put("content", "three pics");
+        post.put("url", "https://cdn.example/a.png");
+        post.put("imageCount", "3");
+
+        when(listOperations.range("user:viewer-m:timeline", 0L, 0L)).thenReturn(List.of("post-multi"));
+        when(hashOperations.entries("post:post-multi")).thenReturn(post);
+        when(listOperations.range("post:post-multi:images", 0L, -1L))
+            .thenReturn(List.of("https://cdn.example/a.png", "https://cdn.example/b.png", "https://cdn.example/c.png"));
+        when(userService.canViewContent("viewer-m", "actor-m")).thenReturn(true);
+        when(userService.hasNegativeKeyword("viewer-m", ShareService.getWords("three pics"))).thenReturn(false);
+        when(userService.isImageBlocked("viewer-m", null)).thenReturn(false);
+        when(userService.getUsername("actor-m")).thenReturn("actor-m");
+        when(userService.getUserField("actor-m", "fullname")).thenReturn("Actor M");
+
+        TimelineResponse response = timelineService.getFifoTimeline("viewer-m", 0, 1);
+
+        var entry = response.getEntities().getFirst();
+        assertEquals(3, entry.getImageUrls().size());
+        assertEquals("https://cdn.example/a.png", entry.getImageUrls().getFirst());
+        assertEquals("https://cdn.example/c.png", entry.getImageUrls().get(2));
+    }
+
+    @Test
+    void generatePostBackfillsImageUrlsForLegacySingleImagePosts() {
+        LinkedHashMap<Object, Object> post = new LinkedHashMap<>();
+        post.put("id", "post-legacy");
+        post.put("uid", "actor-l");
+        post.put("type", "photo");
+        post.put("content", "legacy");
+        post.put("url", "https://cdn.example/legacy.jpg");
+        // NOTE: no imageCount field — simulating a pre-multi-image post
+
+        when(listOperations.range("user:viewer-l:timeline", 0L, 0L)).thenReturn(List.of("post-legacy"));
+        when(hashOperations.entries("post:post-legacy")).thenReturn(post);
+        when(userService.canViewContent("viewer-l", "actor-l")).thenReturn(true);
+        when(userService.hasNegativeKeyword("viewer-l", ShareService.getWords("legacy"))).thenReturn(false);
+        when(userService.isImageBlocked("viewer-l", null)).thenReturn(false);
+        when(userService.getUsername("actor-l")).thenReturn("actor-l");
+        when(userService.getUserField("actor-l", "fullname")).thenReturn("Actor L");
+
+        TimelineResponse response = timelineService.getFifoTimeline("viewer-l", 0, 1);
+
+        var entry = response.getEntities().getFirst();
+        assertEquals(List.of("https://cdn.example/legacy.jpg"), entry.getImageUrls());
+    }
+
+    @Test
     void getRepliesReturnsResolvedReplyEntries() {
         LinkedHashMap<Object, Object> reply = new LinkedHashMap<>();
         reply.put("id", "reply-1");

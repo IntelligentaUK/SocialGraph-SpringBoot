@@ -1,5 +1,6 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.StoredObject;
 import com.intelligenta.socialgraph.service.storage.ObjectStorageService;
@@ -9,9 +10,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.SetOperations;
+import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.ZSetOperations;
@@ -59,7 +63,12 @@ class ShareServiceTest {
     @Mock
     private UserService userService;
 
+    @Mock
+    @SuppressWarnings("rawtypes")
+    private StreamOperations streamOperations;
+
     private ShareService shareService;
+    private EmbeddingProperties embeddingProperties;
 
     @BeforeEach
     void setUp() {
@@ -68,7 +77,11 @@ class ShareServiceTest {
         lenient().when(redisTemplate.opsForSet()).thenReturn(setOperations);
         lenient().when(redisTemplate.opsForZSet()).thenReturn(zSetOperations);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        shareService = new ShareService(redisTemplate, objectStorageService, userService);
+        lenient().when(redisTemplate.opsForStream()).thenReturn(streamOperations);
+        lenient().when(streamOperations.add(org.mockito.ArgumentMatchers.<MapRecord<String, String, String>>any()))
+            .thenReturn(RecordId.of("1-0"));
+        embeddingProperties = new EmbeddingProperties();
+        shareService = new ShareService(redisTemplate, objectStorageService, userService, embeddingProperties);
     }
 
     @Test
@@ -160,6 +173,66 @@ class ShareServiceTest {
     @Test
     void getWordsReturnsUniqueWordSequence() {
         assertEquals(List.of("Hello", "world", "123"), ShareService.getWords("Hello, world! Hello 123"));
+    }
+
+    @Test
+    void sharePhotosWritesImagesListAndImageCount() throws Exception {
+        byte[] img1 = TestImages.pngBytes(4, 3);
+        byte[] img2 = TestImages.pngBytes(5, 3);
+        when(objectStorageService.upload(eq(img1), eq(".png"), eq("image/png")))
+            .thenReturn(new StoredObject("azure", "k1.png", "https://cdn.example/k1.png", "image/png"));
+        when(objectStorageService.upload(eq(img2), eq(".png"), eq("image/png")))
+            .thenReturn(new StoredObject("azure", "k2.png", "https://cdn.example/k2.png", "image/png"));
+        when(setOperations.members("user:user-1:followers")).thenReturn(Set.of());
+        when(zSetOperations.score("user:social:importance", "user-1")).thenReturn(0.0);
+        when(valueOperations.get("user:user-1:connection:edgescore:user-1")).thenReturn("0.0");
+
+        Map<String, String> response = shareService.sharePhotos(
+            "user-1", "two pics", List.of(img1, img2), List.of("image/png", "image/png"));
+
+        String postId = response.get("id");
+        assertEquals("photo", response.get("type"));
+        assertEquals("https://cdn.example/k1.png", response.get("url"));
+        assertEquals("2", response.get("imageCount"));
+        verify(listOperations).rightPushAll(
+            "post:" + postId + ":images",
+            "https://cdn.example/k1.png", "https://cdn.example/k2.png");
+    }
+
+    @Test
+    void sharePhotosRejectsOverCap() throws Exception {
+        byte[] img = TestImages.pngBytes(2, 2);
+        embeddingProperties.setMaxImagesPerPost(3);
+        List<byte[]> tooMany = List.of(img, img, img, img);
+        assertThrows(IllegalArgumentException.class,
+            () -> shareService.sharePhotos("user-1", "hello", tooMany, List.of()));
+    }
+
+    @Test
+    void shareTextXAddsToEmbeddingQueue() {
+        when(setOperations.members("user:user-1:followers")).thenReturn(Set.of());
+        when(zSetOperations.score("user:social:importance", "user-1")).thenReturn(0.0);
+        when(valueOperations.get("user:user-1:connection:edgescore:user-1")).thenReturn("0.0");
+
+        Map<String, String> resp = shareService.shareText("user-1", "hello world");
+
+        ArgumentCaptor<MapRecord<String, String, String>> captor = ArgumentCaptor.forClass(MapRecord.class);
+        verify(streamOperations).add(captor.capture());
+        MapRecord<String, String, String> rec = captor.getValue();
+        assertEquals("embedding:queue", rec.getStream());
+        assertEquals(resp.get("id"), rec.getValue().get("postId"));
+        assertEquals("user-1", rec.getValue().get("authorUid"));
+    }
+
+    @Test
+    void shareVideoDoesNotXAddToEmbeddingQueue() {
+        when(setOperations.members("user:user-1:followers")).thenReturn(Set.of());
+        when(zSetOperations.score("user:social:importance", "user-1")).thenReturn(0.0);
+        when(valueOperations.get("user:user-1:connection:edgescore:user-1")).thenReturn("0.0");
+
+        shareService.shareVideo("user-1", "look at my video", "https://cdn.example/v.mp4");
+
+        verify(streamOperations, never()).add(org.mockito.ArgumentMatchers.<MapRecord<String, String, String>>any());
     }
 
     private static final class TestImages {

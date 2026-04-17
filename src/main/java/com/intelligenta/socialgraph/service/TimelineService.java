@@ -150,6 +150,21 @@ public class TimelineService {
         entry.setParentUuid((String) post.get("parentId"));
         entry.setSharedPostUuid((String) post.get("sharedPostId"));
 
+        String imageCountStr = (String) post.get("imageCount");
+        if (imageCountStr != null) {
+            int count = Integer.parseInt(imageCountStr);
+            if (count > 0) {
+                List<String> urls = redisTemplate.opsForList()
+                    .range("post:" + entry.getUuid() + ":images", 0, -1);
+                if (urls != null && !urls.isEmpty()) {
+                    entry.setImageUrls(urls);
+                }
+            }
+        } else if (entry.getUrl() != null) {
+            // Legacy single-image post: backfill imageUrls so clients have one path.
+            entry.setImageUrls(List.of(entry.getUrl()));
+        }
+
         if (postUid != null) {
             String username = userService.getUsername(postUid);
             String fullname = userService.getUserField(postUid, "fullname");

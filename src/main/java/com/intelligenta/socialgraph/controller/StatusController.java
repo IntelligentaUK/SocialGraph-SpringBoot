@@ -1,5 +1,6 @@
 package com.intelligenta.socialgraph.controller;
 
+import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import com.intelligenta.socialgraph.security.AuthenticatedUser;
 import com.intelligenta.socialgraph.service.ShareService;
 import com.intelligenta.socialgraph.service.TimelineService;
@@ -7,8 +8,12 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -22,13 +27,61 @@ public class StatusController {
     private final ShareService shareService;
     private final TimelineService timelineService;
     private final StringRedisTemplate redisTemplate;
+    private final EmbeddingProperties embeddingProperties;
 
     public StatusController(ShareService shareService,
                             TimelineService timelineService,
-                            StringRedisTemplate redisTemplate) {
+                            StringRedisTemplate redisTemplate,
+                            EmbeddingProperties embeddingProperties) {
         this.shareService = shareService;
         this.timelineService = timelineService;
         this.redisTemplate = redisTemplate;
+        this.embeddingProperties = embeddingProperties;
+    }
+
+    /**
+     * Post a photo status update with multiple images in a single multipart request.
+     * The {@code files} parameter must contain at least one file and at most
+     * {@code embedding.max-images-per-post} files. Non-image files are rejected.
+     */
+    @PostMapping(value = "/status", consumes = "multipart/form-data")
+    public ResponseEntity<Map<String, String>> postStatusMultipart(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestParam(required = false) String content,
+            @RequestParam String type,
+            @RequestParam("files") List<MultipartFile> files) {
+
+        if (!"photo".equals(type)) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (files == null || files.isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (files.size() > embeddingProperties.getMaxImagesPerPost()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        List<byte[]> bytes = new ArrayList<>(files.size());
+        List<String> contentTypes = new ArrayList<>(files.size());
+        for (MultipartFile f : files) {
+            if (f == null || f.isEmpty()) {
+                return ResponseEntity.badRequest().build();
+            }
+            try {
+                bytes.add(f.getBytes());
+            } catch (IOException e) {
+                return ResponseEntity.badRequest().build();
+            }
+            contentTypes.add(f.getContentType());
+        }
+
+        try {
+            Map<String, String> result = shareService.sharePhotos(
+                user.getUid(), content, bytes, contentTypes);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
     }
 
     /**

@@ -2,6 +2,8 @@ package com.intelligenta.socialgraph.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import java.util.List;
+
 /**
  * DTO for a single timeline entry.
  */
@@ -13,6 +15,7 @@ public class TimelineEntry {
     private String type;
     private String content;
     private String url;
+    private List<String> imageUrls;
     private String created;
     private String updated;
     private String parentUuid;
@@ -55,6 +58,14 @@ public class TimelineEntry {
 
     public void setUrl(String url) {
         this.url = url;
+    }
+
+    public List<String> getImageUrls() {
+        return imageUrls;
+    }
+
+    public void setImageUrls(List<String> imageUrls) {
+        this.imageUrls = imageUrls;
     }
 
     public String getCreated() {

@@ -1,5 +1,6 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.StoredObject;
 import com.intelligenta.socialgraph.service.storage.ObjectStorageService;
@@ -7,6 +8,7 @@ import com.intelligenta.socialgraph.util.ImagePayloads;
 import com.intelligenta.socialgraph.util.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -25,23 +27,29 @@ public class ShareService {
 
     private static final Logger log = LoggerFactory.getLogger(ShareService.class);
 
+    static final String EMBEDDING_QUEUE = "embedding:queue";
+
     private final StringRedisTemplate redisTemplate;
     private final ObjectStorageService objectStorageService;
     private final UserService userService;
+    private final EmbeddingProperties embeddingProperties;
 
     public ShareService(StringRedisTemplate redisTemplate,
                         ObjectStorageService objectStorageService,
-                        UserService userService) {
+                        UserService userService,
+                        EmbeddingProperties embeddingProperties) {
         this.redisTemplate = redisTemplate;
         this.objectStorageService = objectStorageService;
         this.userService = userService;
+        this.embeddingProperties = embeddingProperties;
     }
 
     /**
      * Share a photo with URL.
      */
     public Map<String, String> sharePhoto(String authenticatedUser, String content, String url) {
-        return createStatusUpdate(authenticatedUser, content, "photo", url, null, null, null);
+        List<String> urls = url == null ? null : List.of(url);
+        return createStatusUpdate(authenticatedUser, content, "photo", urls, null, null, null);
     }
 
     /**
@@ -55,7 +63,7 @@ public class ShareService {
      * Share a photo with bytes and an optional content type hint.
      */
     public Map<String, String> sharePhoto(String authenticatedUser, String content, byte[] bytes, String contentType) {
-        String url = null;
+        List<String> urls = null;
         String imageHash = null;
 
         if (bytes != null && bytes.length > 0) {
@@ -66,17 +74,50 @@ public class ShareService {
                 imagePayload.extension(),
                 imagePayload.mimeType()
             );
-            url = storedObject.objectUrl();
+            urls = List.of(storedObject.objectUrl());
         }
 
-        return createStatusUpdate(authenticatedUser, content, "photo", url, imageHash, null, null);
+        return createStatusUpdate(authenticatedUser, content, "photo", urls, imageHash, null, null);
+    }
+
+    /**
+     * Share multiple photos in a single post. Uploads each byte-array to object
+     * storage (in input order), records the ordered list on {@code post:<id>:images},
+     * and sets {@code imageCount} on the post hash. The first image's MD5 is
+     * stored as the legacy {@code imageHash} for image-block filtering.
+     */
+    public Map<String, String> sharePhotos(String authenticatedUser,
+                                           String content,
+                                           List<byte[]> imageBytes,
+                                           List<String> contentTypes) {
+        if (imageBytes == null || imageBytes.isEmpty()) {
+            return createStatusUpdate(authenticatedUser, content, "photo", null, null, null, null);
+        }
+        int max = embeddingProperties.getMaxImagesPerPost();
+        if (imageBytes.size() > max) {
+            throw new IllegalArgumentException("too_many_images");
+        }
+
+        List<String> urls = new ArrayList<>(imageBytes.size());
+        String firstHash = null;
+        for (int i = 0; i < imageBytes.size(); i++) {
+            byte[] b = imageBytes.get(i);
+            if (b == null || b.length == 0) continue;
+            String ct = (contentTypes != null && i < contentTypes.size()) ? contentTypes.get(i) : null;
+            ImagePayloads.ImagePayload p = ImagePayloads.fromBytes(b, ct);
+            if (firstHash == null) firstHash = Util.getMD5(b);
+            StoredObject so = objectStorageService.upload(b, p.extension(), p.mimeType());
+            urls.add(so.objectUrl());
+        }
+        return createStatusUpdate(authenticatedUser, content, "photo", urls, firstHash, null, null);
     }
 
     /**
      * Share a video.
      */
     public Map<String, String> shareVideo(String authenticatedUser, String content, String url) {
-        return createStatusUpdate(authenticatedUser, content, "video", url, null, null, null);
+        List<String> urls = url == null ? null : List.of(url);
+        return createStatusUpdate(authenticatedUser, content, "video", urls, null, null, null);
     }
 
     /**
@@ -100,6 +141,10 @@ public class ShareService {
     public Map<String, String> resharePost(String authenticatedUser, String postId, String content) {
         ensurePostExists(postId);
         return createStatusUpdate(authenticatedUser, content, "reshare", null, null, null, postId);
+    }
+
+    int getMaxImagesPerPost() {
+        return embeddingProperties.getMaxImagesPerPost();
     }
 
     /**
@@ -160,7 +205,7 @@ public class ShareService {
     }
 
     private Map<String, String> createStatusUpdate(String authenticatedUser, String content,
-                                                   String type, String url, String imageHash,
+                                                   String type, List<String> imageUrls, String imageHash,
                                                    String parentPostId, String sharedPostId) {
         if (authenticatedUser == null) {
             return null;
@@ -169,13 +214,19 @@ public class ShareService {
         long startTime = System.currentTimeMillis();
         String postId = Util.UUID();
 
+        String primaryUrl = (imageUrls != null && !imageUrls.isEmpty()) ? imageUrls.get(0) : null;
+        int imageCount = imageUrls == null ? 0 : imageUrls.size();
+
         Map<String, String> post = new HashMap<>();
         post.put("id", postId);
         post.put("type", type);
         post.put("uid", authenticatedUser);
         post.put("created", Util.unixtime());
         putIfPresent(post, "content", content);
-        putIfPresent(post, "url", url);
+        putIfPresent(post, "url", primaryUrl);
+        if (imageCount > 0) {
+            post.put("imageCount", Integer.toString(imageCount));
+        }
 
         if (imageHash != null) {
             post.put("imageHash", imageHash);
@@ -194,6 +245,13 @@ public class ShareService {
         // Execute Redis transaction
         redisTemplate.multi();
         redisTemplate.opsForHash().putAll("post:" + postId, post);
+        if (imageCount > 1) {
+            redisTemplate.opsForList().rightPushAll(
+                "post:" + postId + ":images",
+                imageUrls.toArray(new String[0]));
+        } else if (imageCount == 1) {
+            redisTemplate.opsForList().rightPush("post:" + postId + ":images", primaryUrl);
+        }
         addPostToTimeline(authenticatedUser, postId, authenticatedUser);
 
         if (parentPostId != null) {
@@ -210,10 +268,28 @@ public class ShareService {
         redisTemplate.exec();
 
         pushGraph(authenticatedUser, postId, keywords, imageHash);
+
+        if (shouldEmitEmbedding(type, content, imageCount)) {
+            redisTemplate.opsForStream().add(MapRecord.create(
+                EMBEDDING_QUEUE,
+                Map.of("postId", postId, "authorUid", authenticatedUser)));
+        }
+
         post.remove("imageHash");
         post.put("duration", String.valueOf(System.currentTimeMillis() - startTime));
 
         return post;
+    }
+
+    /**
+     * Decides whether the post produces an embedding. Videos are excluded (the
+     * sidecar only handles still images + text). Posts with neither content nor
+     * images are excluded.
+     */
+    private static boolean shouldEmitEmbedding(String type, String content, int imageCount) {
+        if ("video".equals(type)) return false;
+        boolean hasContent = content != null && !content.isBlank();
+        return hasContent || imageCount > 0;
     }
 
     /**
