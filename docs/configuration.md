@@ -138,6 +138,35 @@ These live under the `app.`* YAML prefix and are bound to
 | `app.public-endpoints`                  | `[/api/login, /api/register, /api/ping, /api/session, /api/activate]` | Reference list of public endpoints. `SecurityConfig` does **not** read this list at runtime — it hardcodes the same set in the filter chain. The YAML list is present for documentation and future refactoring. |
 
 
+## AI providers (Spring AI)
+
+Each AI capability selects a provider independently. Providers available in
+Spring AI 2.0.0-M4 are bundled as optional deps; the one whose
+`ai.<capability>.provider` is set + whose credentials are supplied
+autoconfigures its beans.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AI_EMBEDDING_PROVIDER` | `sidecar` | `sidecar`, `none`, or a Spring AI provider key |
+| `AI_EMBEDDING_MODEL` | (catalog default) | Override the model, e.g. `text-embedding-3-large` |
+| `AI_EMBEDDING_DIMENSIONS` | (catalog default) | Override vector dim (OpenAI supports truncation) |
+| `AI_CHAT_PROVIDER` | `sidecar` | Chat provider for the visual summary |
+| `AI_CHAT_MODEL` | (catalog default) | Chat model override |
+| `AI_CHAT_TEMPERATURE` | (provider default) | |
+| `AI_CHAT_MAX_TOKENS` | (provider default) | |
+| `AI_IMAGE_PROVIDER` | `none` | Image-generation provider for `POST /api/images/generate` |
+| `AI_IMAGE_MODEL` | (catalog default) | Image model override |
+| `AI_MODERATION_PROVIDER` | `none` | Moderation provider (OpenAI or Mistral) |
+| `AI_MODERATION_MODEL` | (catalog default) | Moderation model override |
+
+Provider-native configuration (API keys, endpoints, project IDs) flows through
+unchanged from Spring AI's own namespace — `OPENAI_API_KEY`,
+`SPRING_AI_OPENAI_BASE_URL`, `SPRING_AI_AZURE_OPENAI_ENDPOINT`,
+`SPRING_AI_VERTEX_AI_GEMINI_PROJECT_ID`, etc.
+
+Full provider table, defaults, and examples:
+[docs/ai.md](ai.md).
+
 ## Vector embedding pipeline
 
 The `embedding.*` block in `application.yml` configures the sidecar URL,

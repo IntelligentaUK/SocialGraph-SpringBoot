@@ -28,6 +28,16 @@ support up to N images per status update.
 + Gemma-summary fused embedding; `POST /api/search/ai` ranks by caption-text
 embedding. Backed by Redis Stack (RediSearch KNN) and a Rust sidecar that hosts
 both models.
+- **Any Spring AI provider** — routes embeddings, chat (visual summary), image
+generation, and moderation to any of 18 Spring AI 2.0 model providers (OpenAI,
+Anthropic, Vertex AI, Bedrock, Azure OpenAI, Ollama, Mistral, Stability AI,
+Zhipu, MiniMax, OCI GenAI, DeepSeek, PostgresML, local ONNX, …) or the bundled
+Rust sidecar. One active provider per capability; swap models + dims via
+`ai.<capability>.*` without touching code. See [docs/ai.md](docs/ai.md).
+- **Image generation** — `POST /api/images/generate` backed by the active
+image provider (DALL-E, Stable Diffusion XL, cogview, …).
+- **Inline content moderation** — OpenAI omni-mod or Mistral moderation;
+flagged posts return `400 content_blocked` before anything hits Redis.
 
 The legacy advanced-auth helpers from the old codebase (`/api/aes/key`,
 `/api/get/image`, etc.) were intentionally **not** migrated. `/api/session` is

@@ -191,8 +191,16 @@ Failed messages are retried (in-memory counter); on the Nth failure
 
 | Key | Type | Fields / contents | Owner | TTL |
 |-----|------|-------------------|-------|-----|
-| `embedding:post:<postId>` | hash | `author_uid` (UTF-8), `created` (UTF-8 unix seconds), `combined_vec` (binary: 1152 × float32 LE = 4608 bytes; omitted for text-only posts), `text_vec` (binary: 4608 bytes), `gemma_summary` (UTF-8) | `EmbeddingWorker.process` | **691 200 s (8 days)** |
-| `idx:post:embedding` | RediSearch index over prefix `embedding:post:` | see schema below | `RedisSearchIndexInitializer` | — |
+| `embedding:post:<provider>:<dim>:<postId>` | hash | `author_uid` (UTF-8), `created` (UTF-8 unix seconds), `combined_vec` (binary: N × float32 LE; omitted for text-only posts), `text_vec` (binary: N × float32 LE), `gemma_summary` (UTF-8) | `EmbeddingWorker.process` | **691 200 s (8 days)** |
+| `idx:post:embedding:<provider>:<dim>` | RediSearch index over prefix `embedding:post:<provider>:<dim>:` | see schema below | `RedisSearchIndexInitializer` | — |
+
+The index name and key prefix both encode the active embedding provider
+(`ai.embedding.provider`) and its vector dimension. Default install:
+`idx:post:embedding:sidecar:1152` over `embedding:post:sidecar:1152:`.
+Switching to e.g. OpenAI at 1536d creates a parallel
+`idx:post:embedding:openai:1536`; old entries in the sidecar-scoped index
+continue to serve queries from the old provider config until their 8-day TTL
+expires — no manual `FT.DROPINDEX` needed during a provider cutover.
 
 ```
 FT.CREATE idx:post:embedding ON HASH PREFIX 1 embedding:post: SCHEMA

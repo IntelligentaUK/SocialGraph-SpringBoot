@@ -17,6 +17,7 @@ Base URL in development: `http://localhost:4567`.
 | Timeline | [timeline.md](timeline.md) | FIFO, personal, everyone |
 | Storage | [storage.md](storage.md) | signed upload target, liquid-rescale upload |
 | Search | [search.md](search.md) | vector search (`/api/search/question`, `/api/search/ai`) over the last 7 days |
+| Images | [images.md](images.md) | Image generation (`/api/images/generate`) via the active AI provider |
 
 ## Full endpoint list
 
@@ -78,6 +79,7 @@ Authenticated (`Authorization: Bearer <token>` required):
 - `GET  /api/timeline/everyone`
 - `POST /api/search/question`
 - `POST /api/search/ai`
+- `POST /api/images/generate`
 
 ## Conventions
 

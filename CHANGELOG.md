@@ -7,6 +7,32 @@ release. Unreleased work sits at the top.
 
 ### Added
 
+- **Multi-provider AI routing via Spring AI 2.0** — every shipped model starter
+  in Spring AI 2.0.0-M4 is bundled (optional) and selectable per-capability via
+  `ai.embedding.provider` / `ai.chat.provider` / `ai.image.provider` /
+  `ai.moderation.provider`. Providers covered: OpenAI, Azure OpenAI, Anthropic,
+  Google GenAI (Gemini), Vertex AI (Gemini + embeddings), Bedrock (Converse,
+  Titan, Cohere), Ollama, Mistral AI, Stability AI, Zhipu AI, MiniMax, OCI
+  GenAI, DeepSeek, PostgresML, local ONNX transformers — 18 total plus the
+  existing Rust `sidecar` and a `none` no-op. The sidecar remains the default
+  so no existing install changes behaviour.
+- **Default model catalog** — `DefaultModelCatalog` hardcodes a recommended
+  model + dimension for every (capability, provider) pair. Admins override any
+  field via `ai.<capability>.model` / `dimensions` / `temperature` /
+  `max-tokens`, and everything under `spring.ai.<provider>.*` continues to flow
+  through unchanged.
+- **Per-provider/dim RediSearch index** — `idx:post:embedding:<provider>:<dim>`
+  replaces the single `idx:post:embedding`. Switching provider creates a new
+  index; old entries expire via TTL (no data loss, no `FT.DROPINDEX` needed).
+- **`POST /api/images/generate`** — generate images with the active provider
+  (OpenAI DALL-E, Azure OpenAI DALL-E, Stability AI, Zhipu cogview). Returns
+  503 when `ai.image.provider=none`.
+- **Inline moderation hook** — `ShareService.createStatusUpdate` calls the
+  active `ContentModerator` (OpenAI omni-mod or Mistral moderation) before the
+  Redis transaction. Flagged content returns `400 content_blocked` with the
+  triggered categories.
+- **New docs** — [`docs/ai.md`](docs/ai.md) (provider table + config recipes)
+  and [`docs/api/images.md`](docs/api/images.md).
 - **Multimodal vector search** — SigLIP-2 + Gemma VLM powered retrieval over the last 7 days of posts.
   - Two endpoints: `POST /api/search/question` (multimodal, ranks image + Gemma summary fused vectors) and `POST /api/search/ai` (text-only, ranks SigLIP-2 caption embeddings). Both accept `{query, limit?}`, return `{results, count, durationMs}` with typed `SearchResult` records.
   - Rust sidecar (`embedding-sidecar/`, axum + candle) exposes `/summarize`, `/embed/text`, `/embed/image-text`, `/healthz`. Ships with deterministic stub models (default build) and a `models` feature flag for the real candle-backed loaders — lets the rest of the stack be exercised without downloading ~20 GB of weights.
