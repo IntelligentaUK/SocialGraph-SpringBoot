@@ -9,7 +9,7 @@ tests passing locally.
 |------------|---------|-------|
 | JDK        | Java 25 | `java -version` should report 25. Earlier JDKs will not compile the project. |
 | Maven      | Bundled | Use the `./mvnw` wrapper that ships with the repo. |
-| Redis      | 5.0+    | The app uses `StringRedisTemplate`; any recent Redis works. |
+| Redis      | Redis Stack 7.2+ | Vector search requires the RediSearch module; use `redis/redis-stack-server`. Plain `redis` will fail startup. |
 | Storage    | one of  | Azure Blob Storage, Google Cloud Storage, or OCI Object Storage. Default is Azure. |
 
 Optional:
@@ -27,15 +27,23 @@ cd SocialGraph
 
 ## Start Redis
 
+SocialGraph requires **Redis Stack** (for the RediSearch module used by vector
+search). Use the supplied `docker-compose.yml`:
+
 ```bash
-docker run -d --name socialgraph-redis -p 6379:6379 redis:7
+docker compose up -d redis
 ```
 
 Verify:
 
 ```bash
-redis-cli ping   # -> PONG
+redis-cli ping                       # -> PONG
+redis-cli MODULE LIST | grep -i search   # -> a line including 'name search'
 ```
+
+If `MODULE LIST` does not list `search`, the plain `redis` image is running
+instead of `redis/redis-stack-server` — stop that container and bring the
+compose service back up.
 
 If your Redis is on a different host / port / uses a password, export
 `REDIS_HOST`, `REDIS_PORT`, and/or `REDIS_PASSWORD` before starting the app — see

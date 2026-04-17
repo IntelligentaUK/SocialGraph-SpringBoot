@@ -1,0 +1,36 @@
+services:
+  redis:
+    image: redis/redis-stack-server:7.4.0-v0
+    container_name: socialgraph-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  embedding-sidecar:
+    build: ./embedding-sidecar
+    container_name: socialgraph-sidecar
+    ports:
+      - "8000:8000"
+    environment:
+      - SIDECAR_PORT=8000
+      - MODEL_CACHE_DIR=/app/models
+      - HF_TOKEN=${HF_TOKEN:-}
+      - GEMMA_MODEL_ID=${GEMMA_MODEL_ID:-google/gemma-3-4b-it}
+      - SIGLIP_MODEL_ID=${SIGLIP_MODEL_ID:-google/siglip2-giant-opt-patch16-384}
+      - RUST_LOG=info,embedding_sidecar=debug
+    volumes:
+      - ./.model-cache:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - sidecar
+
+volumes:
+  redis-data:

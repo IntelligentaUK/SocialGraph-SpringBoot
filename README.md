@@ -19,9 +19,15 @@ SocialGraph implements the core social surface a timeline app needs:
 - **Posts** — text, photo, and video status updates; replies; reshares; edit; delete.
 - **Timelines** — FIFO, personal-importance, and global-importance feeds per user.
 - **Reactions** — like, love, fav, and share with listable actor counts per post.
-- **Content filters** — negative keyword blocklists and MD5 image blocklists per user (Migration to NeuralNet based image similarity detection planned )
+- **Content filters** — negative keyword blocklists and MD5 image blocklists per user.
 - **Media** — seam-carved (liquid rescaled) image uploads pushed to the active object
-store, plus a provider-neutral signed upload target endpoint.
+store, plus a provider-neutral signed upload target endpoint. Multi-image posts
+support up to N images per status update.
+- **Vector search** — SigLIP-2 + Gemma-powered multimodal retrieval over the last
+7 days of posts. Two endpoints: `POST /api/search/question` ranks posts by image
++ Gemma-summary fused embedding; `POST /api/search/ai` ranks by caption-text
+embedding. Backed by Redis Stack (RediSearch KNN) and a Rust sidecar that hosts
+both models.
 
 The legacy advanced-auth helpers from the old codebase (`/api/aes/key`,
 `/api/get/image`, etc.) were intentionally **not** migrated. `/api/session` is
@@ -30,8 +36,8 @@ preserved as the public RSA bootstrap endpoint.
 ## Quickstart
 
 ```bash
-# 1. Start Redis
-docker run -d --name socialgraph-redis -p 6379:6379 redis:trixie
+# 1. Start Redis Stack (RediSearch is required for vector search)
+docker compose up -d redis
 
 # 2. Point storage at a bucket you control, e.g. Azure Blob:
 export STORAGE_PROVIDER=azure
