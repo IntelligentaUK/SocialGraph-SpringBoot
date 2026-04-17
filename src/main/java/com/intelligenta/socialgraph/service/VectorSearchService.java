@@ -1,5 +1,6 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.ai.EmbeddingProvider;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import com.intelligenta.socialgraph.config.RedisSearchIndexInitializer;
 import com.intelligenta.socialgraph.model.search.SearchResult;
@@ -36,16 +37,16 @@ public class VectorSearchService {
 
     private final StringRedisTemplate redis;
     private final StatefulRedisConnection<byte[], byte[]> searchConnection;
-    private final EmbeddingClient sidecar;
+    private final EmbeddingProvider embeddingProvider;
     private final EmbeddingProperties props;
 
     public VectorSearchService(StringRedisTemplate redis,
                                StatefulRedisConnection<byte[], byte[]> searchConnection,
-                               EmbeddingClient sidecar,
+                               EmbeddingProvider embeddingProvider,
                                EmbeddingProperties props) {
         this.redis = redis;
         this.searchConnection = searchConnection;
-        this.sidecar = sidecar;
+        this.embeddingProvider = embeddingProvider;
         this.props = props;
     }
 
@@ -61,7 +62,7 @@ public class VectorSearchService {
 
     private List<SearchResult> knn(String query, int limit, String vectorField) {
         int k = Math.max(1, Math.min(limit, props.getSearchLimitMax()));
-        float[] qvec = sidecar.embedText(query);
+        float[] qvec = embeddingProvider.embedText(query);
         byte[] qbytes = EmbeddingWorker.toLeBytes(qvec);
 
         long now = Instant.now().getEpochSecond();

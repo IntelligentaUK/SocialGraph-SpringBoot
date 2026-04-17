@@ -1,5 +1,7 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.ai.EmbeddingProvider;
+import com.intelligenta.socialgraph.ai.VisualSummarizer;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +46,8 @@ class EmbeddingWorkerTest {
     @Mock RedisTemplate<String, byte[]> binaryRedis;
     @Mock @SuppressWarnings("rawtypes") HashOperations binaryHashOperations;
 
-    @Mock EmbeddingClient sidecar;
+    @Mock EmbeddingProvider embeddingProvider;
+    @Mock VisualSummarizer summarizer;
 
     private EmbeddingProperties props;
     private EmbeddingWorker worker;
@@ -57,7 +60,7 @@ class EmbeddingWorkerTest {
         lenient().when(binaryRedis.opsForHash()).thenReturn(binaryHashOperations);
         lenient().when(hashOperations.entries(org.mockito.ArgumentMatchers.<String>any())).thenReturn(Map.of());
         props = new EmbeddingProperties();
-        worker = new EmbeddingWorker(redis, binaryRedis, sidecar, props);
+        worker = new EmbeddingWorker(redis, binaryRedis, embeddingProvider, summarizer, props);
     }
 
     @Test
@@ -72,7 +75,7 @@ class EmbeddingWorkerTest {
             .thenReturn(List.of());
 
         float[] textVec = fakeVec(1152, 0.1f);
-        when(sidecar.embedText("hello world")).thenReturn(textVec);
+        when(embeddingProvider.embedText("hello world")).thenReturn(textVec);
 
         @SuppressWarnings({"unchecked", "rawtypes"})
         MapRecord<String, Object, Object> rec = (MapRecord) MapRecord.create(
@@ -81,8 +84,8 @@ class EmbeddingWorkerTest {
 
         worker.process(rec);
 
-        verify(sidecar, never()).summarize(any(), anyList());
-        verify(sidecar, never()).embedImageAndText(any(), any());
+        verify(summarizer, never()).summarize(any(), anyList());
+        verify(embeddingProvider, never()).embedImageAndText(any(), any());
         verify(hashOperations).put("embedding:post:post-t", "author_uid", "u-1");
         verify(hashOperations).put("embedding:post:post-t", "created", "1700000000");
 
@@ -106,13 +109,13 @@ class EmbeddingWorkerTest {
         when(listOperations.range("post:post-p:images", 0, props.getImagesForEmbedding() - 1))
             .thenReturn(List.of("https://cdn/a.png", "https://cdn/b.png"));
 
-        when(sidecar.summarize(eq("a nice pic"), eq(List.of("https://cdn/a.png", "https://cdn/b.png"))))
+        when(summarizer.summarize(eq("a nice pic"), eq(List.of("https://cdn/a.png", "https://cdn/b.png"))))
             .thenReturn("a picture of something");
         float[] combined = fakeVec(1152, 0.2f);
         float[] textVec = fakeVec(1152, 0.3f);
-        when(sidecar.embedImageAndText("https://cdn/a.png", "a picture of something"))
-            .thenReturn(combined);
-        when(sidecar.embedText("a nice pic")).thenReturn(textVec);
+        when(embeddingProvider.embedImageAndText("https://cdn/a.png", "a picture of something"))
+            .thenReturn(java.util.Optional.of(combined));
+        when(embeddingProvider.embedText("a nice pic")).thenReturn(textVec);
 
         @SuppressWarnings({"unchecked", "rawtypes"})
         MapRecord<String, Object, Object> rec = (MapRecord) MapRecord.create(
@@ -139,7 +142,7 @@ class EmbeddingWorkerTest {
         worker.process(rec);
 
         verify(streamOperations).acknowledge(EmbeddingWorker.STREAM, EmbeddingWorker.GROUP, rec.getId());
-        verify(sidecar, never()).embedText(any());
+        verify(embeddingProvider, never()).embedText(any());
     }
 
     @Test

@@ -1,5 +1,7 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.ai.EmbeddingProvider;
+import com.intelligenta.socialgraph.ai.VisualSummarizer;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -41,7 +43,8 @@ public class EmbeddingWorker {
 
     private final StringRedisTemplate redis;
     private final RedisTemplate<String, byte[]> binaryRedis;
-    private final EmbeddingClient sidecar;
+    private final EmbeddingProvider embeddingProvider;
+    private final VisualSummarizer summarizer;
     private final EmbeddingProperties props;
     private final Map<String, Integer> retries = new ConcurrentHashMap<>();
 
@@ -50,11 +53,13 @@ public class EmbeddingWorker {
 
     public EmbeddingWorker(StringRedisTemplate redis,
                            RedisTemplate<String, byte[]> binaryRedisTemplate,
-                           EmbeddingClient sidecar,
+                           EmbeddingProvider embeddingProvider,
+                           VisualSummarizer summarizer,
                            EmbeddingProperties props) {
         this.redis = redis;
         this.binaryRedis = binaryRedisTemplate;
-        this.sidecar = sidecar;
+        this.embeddingProvider = embeddingProvider;
+        this.summarizer = summarizer;
         this.props = props;
     }
 
@@ -131,12 +136,17 @@ public class EmbeddingWorker {
         if (images == null) images = List.of();
 
         String summary = images.isEmpty()
-            ? content
-            : sidecar.summarize(content, images);
+            ? (content.isBlank() ? " " : content)
+            : summarizer.summarize(content, images);
 
-        float[] combined = images.isEmpty() ? null
-            : sidecar.embedImageAndText(images.get(0), summary);
-        float[] text = sidecar.embedText(content.isBlank() ? " " : content);
+        float[] combined;
+        if (images.isEmpty()) {
+            combined = null;
+        } else {
+            combined = embeddingProvider.embedImageAndText(images.get(0), summary)
+                .orElseGet(() -> embeddingProvider.embedText(summary));
+        }
+        float[] text = embeddingProvider.embedText(content.isBlank() ? " " : content);
 
         String key = "embedding:post:" + postId;
         redis.opsForHash().put(key, "author_uid", uid);

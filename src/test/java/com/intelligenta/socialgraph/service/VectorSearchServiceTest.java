@@ -1,6 +1,7 @@
 package com.intelligenta.socialgraph.service;
 
 import com.intelligenta.socialgraph.SocialGraphApplication;
+import com.intelligenta.socialgraph.ai.EmbeddingProvider;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import com.intelligenta.socialgraph.model.search.SearchResult;
 import com.intelligenta.socialgraph.support.RedisStackIntegrationTest;
@@ -26,7 +27,7 @@ import static org.mockito.Mockito.when;
 @SpringBootTest(classes = SocialGraphApplication.class)
 class VectorSearchServiceTest extends RedisStackIntegrationTest {
 
-    @MockitoBean EmbeddingClient sidecar;
+    @MockitoBean EmbeddingProvider embeddingProvider;
 
     @Autowired StringRedisTemplate redis;
     @Autowired RedisTemplate<String, byte[]> binaryRedis;
@@ -61,7 +62,7 @@ class VectorSearchServiceTest extends RedisStackIntegrationTest {
             unitVec(1152, 0), old);
 
         // Query embedding is identical to post-cat's combined_vec so it should rank first.
-        when(sidecar.embedText(any())).thenReturn(unitVec(1152, 0));
+        when(embeddingProvider.embedText(any())).thenReturn(unitVec(1152, 0));
 
         List<SearchResult> results = service.questionSearch("feline", 10);
 
@@ -77,7 +78,7 @@ class VectorSearchServiceTest extends RedisStackIntegrationTest {
         long now = Instant.now().getEpochSecond();
         writePostAndEmbeddingText("post-text", "u1", "just text content", now, unitVec(1152, 5));
 
-        when(sidecar.embedText(any())).thenReturn(unitVec(1152, 5));
+        when(embeddingProvider.embedText(any())).thenReturn(unitVec(1152, 5));
 
         List<SearchResult> results = service.aiTextSearch("content", 10);
 
