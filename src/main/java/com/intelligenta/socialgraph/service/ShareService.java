@@ -1,8 +1,11 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.ai.ContentModerator;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
+import com.intelligenta.socialgraph.exception.ContentBlockedException;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.StoredObject;
+import com.intelligenta.socialgraph.model.moderation.ModerationDecision;
 import com.intelligenta.socialgraph.service.storage.ObjectStorageService;
 import com.intelligenta.socialgraph.util.ImagePayloads;
 import com.intelligenta.socialgraph.util.Util;
@@ -33,15 +36,18 @@ public class ShareService {
     private final ObjectStorageService objectStorageService;
     private final UserService userService;
     private final EmbeddingProperties embeddingProperties;
+    private final ContentModerator moderator;
 
     public ShareService(StringRedisTemplate redisTemplate,
                         ObjectStorageService objectStorageService,
                         UserService userService,
-                        EmbeddingProperties embeddingProperties) {
+                        EmbeddingProperties embeddingProperties,
+                        ContentModerator moderator) {
         this.redisTemplate = redisTemplate;
         this.objectStorageService = objectStorageService;
         this.userService = userService;
         this.embeddingProperties = embeddingProperties;
+        this.moderator = moderator;
     }
 
     /**
@@ -209,6 +215,13 @@ public class ShareService {
                                                    String parentPostId, String sharedPostId) {
         if (authenticatedUser == null) {
             return null;
+        }
+
+        if (moderator.enabled() && content != null && !content.isBlank()) {
+            ModerationDecision decision = moderator.moderate(content);
+            if (decision.blocked()) {
+                throw new ContentBlockedException(decision);
+            }
         }
 
         long startTime = System.currentTimeMillis();

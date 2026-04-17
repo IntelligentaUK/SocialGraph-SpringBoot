@@ -1,8 +1,12 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.ai.ContentModerator;
+import com.intelligenta.socialgraph.ai.moderation.NoopModerator;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
+import com.intelligenta.socialgraph.exception.ContentBlockedException;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.StoredObject;
+import com.intelligenta.socialgraph.model.moderation.ModerationDecision;
 import com.intelligenta.socialgraph.service.storage.ObjectStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -69,6 +73,7 @@ class ShareServiceTest {
 
     private ShareService shareService;
     private EmbeddingProperties embeddingProperties;
+    private ContentModerator moderator;
 
     @BeforeEach
     void setUp() {
@@ -81,7 +86,8 @@ class ShareServiceTest {
         lenient().when(streamOperations.add(org.mockito.ArgumentMatchers.<MapRecord<String, String, String>>any()))
             .thenReturn(RecordId.of("1-0"));
         embeddingProperties = new EmbeddingProperties();
-        shareService = new ShareService(redisTemplate, objectStorageService, userService, embeddingProperties);
+        moderator = new NoopModerator();
+        shareService = new ShareService(redisTemplate, objectStorageService, userService, embeddingProperties, moderator);
     }
 
     @Test
@@ -222,6 +228,21 @@ class ShareServiceTest {
         assertEquals("embedding:queue", rec.getStream());
         assertEquals(resp.get("id"), rec.getValue().get("postId"));
         assertEquals("user-1", rec.getValue().get("authorUid"));
+    }
+
+    @Test
+    void createStatusUpdateThrowsWhenModeratorFlagsContent() {
+        ContentModerator flaggingModerator = new ContentModerator() {
+            @Override public ModerationDecision moderate(String text) {
+                return new ModerationDecision(true, List.of("hate"), java.util.Map.of("hate", 0.99));
+            }
+            @Override public boolean enabled() { return true; }
+            @Override public String providerKey() { return "test"; }
+        };
+        ShareService svc = new ShareService(redisTemplate, objectStorageService, userService,
+            embeddingProperties, flaggingModerator);
+
+        assertThrows(ContentBlockedException.class, () -> svc.shareText("u1", "hate speech here"));
     }
 
     @Test

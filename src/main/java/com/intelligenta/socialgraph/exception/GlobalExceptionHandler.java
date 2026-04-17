@@ -1,5 +1,6 @@
 package com.intelligenta.socialgraph.exception;
 
+import com.intelligenta.socialgraph.ai.ProviderException;
 import com.intelligenta.socialgraph.model.ErrorResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -135,6 +136,30 @@ public class GlobalExceptionHandler {
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
             .body(new ErrorResponse("invalid_request_body", "Request body could not be parsed"));
+    }
+
+    @ExceptionHandler(ContentBlockedException.class)
+    public ResponseEntity<ErrorResponse> handleContentBlocked(ContentBlockedException ex) {
+        log.warn("Content blocked: {}", ex.getMessage());
+        return ResponseEntity
+            .status(HttpStatus.BAD_REQUEST)
+            .body(new ErrorResponse("content_blocked", ex.getMessage()));
+    }
+
+    @ExceptionHandler(EmbeddingSidecarException.class)
+    public ResponseEntity<ErrorResponse> handleEmbeddingSidecar(EmbeddingSidecarException ex) {
+        log.warn("Embedding sidecar error: {}", ex.getMessage());
+        return ResponseEntity
+            .status(HttpStatus.BAD_GATEWAY)
+            .body(new ErrorResponse("sidecar_unavailable", "Embedding sidecar unreachable"));
+    }
+
+    @ExceptionHandler(ProviderException.class)
+    public ResponseEntity<ErrorResponse> handleProviderException(ProviderException ex) {
+        log.warn("AI provider error: {}", ex.getMessage());
+        return ResponseEntity
+            .status(HttpStatus.BAD_GATEWAY)
+            .body(new ErrorResponse("ai_provider_failed", "Upstream AI provider failed"));
     }
 
     @ExceptionHandler(Exception.class)
