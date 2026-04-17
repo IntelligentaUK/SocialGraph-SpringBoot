@@ -7,6 +7,7 @@ import com.intelligenta.socialgraph.model.embedding.EmbedResponse;
 import com.intelligenta.socialgraph.model.embedding.EmbedTextRequest;
 import com.intelligenta.socialgraph.model.embedding.SummarizeRequest;
 import com.intelligenta.socialgraph.model.embedding.SummarizeResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ public class EmbeddingClient {
     private final RestClient summarizeClient;
     private final RestClient embedClient;
 
+    @Autowired
     public EmbeddingClient(EmbeddingProperties props) {
         this(
             RestClient.builder()

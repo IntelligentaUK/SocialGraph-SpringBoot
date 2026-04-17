@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intelligenta.socialgraph.controller.ActionController;
 import com.intelligenta.socialgraph.controller.AuthController;
+import com.intelligenta.socialgraph.controller.SearchController;
 import com.intelligenta.socialgraph.controller.StatusController;
 import com.intelligenta.socialgraph.controller.StorageController;
 import com.intelligenta.socialgraph.controller.TimelineController;
@@ -40,6 +41,7 @@ class ApiSurfaceRegressionTest {
         Set<Route> routes = collectRoutes(
             ActionController.class,
             AuthController.class,
+            SearchController.class,
             StatusController.class,
             StorageController.class,
             TimelineController.class,
@@ -104,6 +106,8 @@ class ApiSurfaceRegressionTest {
         assertTrue(routes.contains(route("POST", "/api/posts/{postId}/reshare")));
         assertTrue(routes.contains(route("PATCH", "/api/posts/{postId}")));
         assertTrue(routes.contains(route("DELETE", "/api/posts/{postId}")));
+        assertTrue(routes.contains(route("POST", "/api/search/question")));
+        assertTrue(routes.contains(route("POST", "/api/search/ai")));
 
         assertFalse(routes.contains(route("GET", "/api/aes/key")));
         assertFalse(routes.contains(route("GET", "/api/get/image")));
