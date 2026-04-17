@@ -59,9 +59,14 @@ class EmbeddingWorkerTest {
         lenient().when(redis.opsForStream()).thenReturn(streamOperations);
         lenient().when(binaryRedis.opsForHash()).thenReturn(binaryHashOperations);
         lenient().when(hashOperations.entries(org.mockito.ArgumentMatchers.<String>any())).thenReturn(Map.of());
+        lenient().when(embeddingProvider.providerKey()).thenReturn("sidecar");
+        lenient().when(embeddingProvider.vectorDim()).thenReturn(1152);
         props = new EmbeddingProperties();
         worker = new EmbeddingWorker(redis, binaryRedis, embeddingProvider, summarizer, props);
     }
+
+    /** Index-namespaced key prefix matching the default sidecar/1152 mock setup. */
+    private static final String KEY_PREFIX = "embedding:post:sidecar:1152:";
 
     @Test
     void processWritesTextOnlyEmbeddingForTextPost() {
@@ -86,15 +91,15 @@ class EmbeddingWorkerTest {
 
         verify(summarizer, never()).summarize(any(), anyList());
         verify(embeddingProvider, never()).embedImageAndText(any(), any());
-        verify(hashOperations).put("embedding:post:post-t", "author_uid", "u-1");
-        verify(hashOperations).put("embedding:post:post-t", "created", "1700000000");
+        verify(hashOperations).put(KEY_PREFIX + "post-t", "author_uid", "u-1");
+        verify(hashOperations).put(KEY_PREFIX + "post-t", "created", "1700000000");
 
         ArgumentCaptor<byte[]> bytesCaptor = ArgumentCaptor.forClass(byte[].class);
-        verify(binaryHashOperations).put(eq("embedding:post:post-t"), eq("text_vec"), bytesCaptor.capture());
+        verify(binaryHashOperations).put(eq(KEY_PREFIX + "post-t"), eq("text_vec"), bytesCaptor.capture());
         assertArrayEquals(textVec, leBytesToFloats(bytesCaptor.getValue()), 1e-6f);
-        verify(binaryHashOperations, never()).put(eq("embedding:post:post-t"), eq("combined_vec"), any());
+        verify(binaryHashOperations, never()).put(eq(KEY_PREFIX + "post-t"), eq("combined_vec"), any());
 
-        verify(redis).expire("embedding:post:post-t", props.getEmbeddingTtlSeconds(), TimeUnit.SECONDS);
+        verify(redis).expire(KEY_PREFIX + "post-t", props.getEmbeddingTtlSeconds(), TimeUnit.SECONDS);
         verify(streamOperations).acknowledge(EmbeddingWorker.STREAM, EmbeddingWorker.GROUP, rec.getId());
     }
 
@@ -124,9 +129,9 @@ class EmbeddingWorkerTest {
 
         worker.process(rec);
 
-        verify(hashOperations).put("embedding:post:post-p", "gemma_summary", "a picture of something");
-        verify(binaryHashOperations).put(eq("embedding:post:post-p"), eq("combined_vec"), any(byte[].class));
-        verify(binaryHashOperations).put(eq("embedding:post:post-p"), eq("text_vec"), any(byte[].class));
+        verify(hashOperations).put(KEY_PREFIX + "post-p", "gemma_summary", "a picture of something");
+        verify(binaryHashOperations).put(eq(KEY_PREFIX + "post-p"), eq("combined_vec"), any(byte[].class));
+        verify(binaryHashOperations).put(eq(KEY_PREFIX + "post-p"), eq("text_vec"), any(byte[].class));
         verify(streamOperations).acknowledge(EmbeddingWorker.STREAM, EmbeddingWorker.GROUP, rec.getId());
     }
 

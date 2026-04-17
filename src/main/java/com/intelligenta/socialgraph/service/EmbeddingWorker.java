@@ -3,6 +3,7 @@ package com.intelligenta.socialgraph.service;
 import com.intelligenta.socialgraph.ai.EmbeddingProvider;
 import com.intelligenta.socialgraph.ai.VisualSummarizer;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
+import com.intelligenta.socialgraph.config.RedisSearchIndexInitializer;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -148,7 +149,8 @@ public class EmbeddingWorker {
         }
         float[] text = embeddingProvider.embedText(content.isBlank() ? " " : content);
 
-        String key = "embedding:post:" + postId;
+        String key = RedisSearchIndexInitializer.keyPrefix(
+            embeddingProvider.providerKey(), embeddingProvider.vectorDim()) + postId;
         redis.opsForHash().put(key, "author_uid", uid);
         redis.opsForHash().put(key, "created", created);
         redis.opsForHash().put(key, "gemma_summary", summary);

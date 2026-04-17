@@ -27,7 +27,12 @@ import static org.mockito.Mockito.when;
 @SpringBootTest(classes = SocialGraphApplication.class)
 class VectorSearchServiceTest extends RedisStackIntegrationTest {
 
-    @MockitoBean EmbeddingProvider embeddingProvider;
+    // @MockitoBean fires after context startup, but RedisSearchIndexInitializer's
+    // onApplicationEvent runs DURING startup and calls embeddingProvider.vectorDim()
+    // — if the mock returns 0 the FT.CREATE fails. Spy over the real sidecar bean
+    // so index creation uses the real 1152; only embedText behaviour needs mocking.
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+    EmbeddingProvider embeddingProvider;
 
     @Autowired StringRedisTemplate redis;
     @Autowired RedisTemplate<String, byte[]> binaryRedis;
@@ -39,7 +44,7 @@ class VectorSearchServiceTest extends RedisStackIntegrationTest {
         redis.getConnectionFactory().getConnection().serverCommands().flushDb();
         // Recreate index because flushdb drops it
         try {
-            new com.intelligenta.socialgraph.config.RedisSearchIndexInitializer(redis, props)
+            new com.intelligenta.socialgraph.config.RedisSearchIndexInitializer(redis, embeddingProvider)
                 .onApplicationEvent(null);
         } catch (Exception ignored) {
             // Index may still exist; recreate tolerated
@@ -62,7 +67,8 @@ class VectorSearchServiceTest extends RedisStackIntegrationTest {
             unitVec(1152, 0), old);
 
         // Query embedding is identical to post-cat's combined_vec so it should rank first.
-        when(embeddingProvider.embedText(any())).thenReturn(unitVec(1152, 0));
+        org.mockito.Mockito.doReturn(unitVec(1152, 0))
+            .when(embeddingProvider).embedText(org.mockito.ArgumentMatchers.any());
 
         List<SearchResult> results = service.questionSearch("feline", 10);
 
@@ -78,7 +84,8 @@ class VectorSearchServiceTest extends RedisStackIntegrationTest {
         long now = Instant.now().getEpochSecond();
         writePostAndEmbeddingText("post-text", "u1", "just text content", now, unitVec(1152, 5));
 
-        when(embeddingProvider.embedText(any())).thenReturn(unitVec(1152, 5));
+        org.mockito.Mockito.doReturn(unitVec(1152, 5))
+            .when(embeddingProvider).embedText(org.mockito.ArgumentMatchers.any());
 
         List<SearchResult> results = service.aiTextSearch("content", 10);
 
@@ -95,7 +102,7 @@ class VectorSearchServiceTest extends RedisStackIntegrationTest {
             "created", String.valueOf(created)));
         redis.opsForList().rightPush("post:" + postId + ":images", url);
 
-        String key = "embedding:post:" + postId;
+        String key = com.intelligenta.socialgraph.config.RedisSearchIndexInitializer.keyPrefix("sidecar", 1152) + postId;
         redis.opsForHash().put(key, "author_uid", uid);
         redis.opsForHash().put(key, "created", String.valueOf(created));
         redis.opsForHash().put(key, "gemma_summary", content);
@@ -111,7 +118,7 @@ class VectorSearchServiceTest extends RedisStackIntegrationTest {
             "content", content,
             "created", String.valueOf(created)));
 
-        String key = "embedding:post:" + postId;
+        String key = com.intelligenta.socialgraph.config.RedisSearchIndexInitializer.keyPrefix("sidecar", 1152) + postId;
         redis.opsForHash().put(key, "author_uid", uid);
         redis.opsForHash().put(key, "created", String.valueOf(created));
         redis.opsForHash().put(key, "gemma_summary", content);

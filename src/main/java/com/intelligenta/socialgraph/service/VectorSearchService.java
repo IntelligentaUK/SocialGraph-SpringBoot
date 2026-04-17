@@ -32,8 +32,6 @@ import java.util.Map;
 public class VectorSearchService {
 
     private static final Logger log = LoggerFactory.getLogger(VectorSearchService.class);
-    private static final String INDEX = RedisSearchIndexInitializer.INDEX_NAME;
-    private static final String KEY_PREFIX = RedisSearchIndexInitializer.KEY_PREFIX;
 
     private final StringRedisTemplate redis;
     private final StatefulRedisConnection<byte[], byte[]> searchConnection;
@@ -65,6 +63,11 @@ public class VectorSearchService {
         float[] qvec = embeddingProvider.embedText(query);
         byte[] qbytes = EmbeddingWorker.toLeBytes(qvec);
 
+        String indexName = RedisSearchIndexInitializer.indexName(
+            embeddingProvider.providerKey(), embeddingProvider.vectorDim());
+        String keyPrefix = RedisSearchIndexInitializer.keyPrefix(
+            embeddingProvider.providerKey(), embeddingProvider.vectorDim());
+
         long now = Instant.now().getEpochSecond();
         long start = now - Duration.ofDays(props.getSearchWindowDays()).toSeconds();
         String expr = String.format("@created:[%d %d]=>[KNN %d @%s $qv AS score]",
@@ -83,16 +86,16 @@ public class VectorSearchService {
 
         SearchReply<byte[], byte[]> reply;
         try {
-            reply = searchConnection.sync().ftSearch(bytes(INDEX), bytes(expr), args);
+            reply = searchConnection.sync().ftSearch(bytes(indexName), bytes(expr), args);
         } catch (RedisCommandExecutionException e) {
-            log.warn("FT.SEARCH failed: {}", e.getMessage());
+            log.warn("FT.SEARCH failed on {}: {}", indexName, e.getMessage());
             return List.of();
         }
 
-        return hydrate(reply);
+        return hydrate(reply, keyPrefix);
     }
 
-    private List<SearchResult> hydrate(SearchReply<byte[], byte[]> reply) {
+    private List<SearchResult> hydrate(SearchReply<byte[], byte[]> reply, String keyPrefix) {
         if (reply == null) return List.of();
         List<SearchReply.SearchResult<byte[], byte[]>> results = reply.getResults();
         if (results == null || results.isEmpty()) return List.of();
@@ -102,8 +105,8 @@ public class VectorSearchService {
             byte[] idBytes = doc.getId();
             if (idBytes == null) continue;
             String key = new String(idBytes, StandardCharsets.UTF_8);
-            if (!key.startsWith(KEY_PREFIX)) continue;
-            String postId = key.substring(KEY_PREFIX.length());
+            if (!key.startsWith(keyPrefix)) continue;
+            String postId = key.substring(keyPrefix.length());
 
             double score = 1.0;
             Map<byte[], byte[]> fields = doc.getFields();

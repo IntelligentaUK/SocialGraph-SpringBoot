@@ -1,5 +1,6 @@
 package com.intelligenta.socialgraph.config;
 
+import com.intelligenta.socialgraph.ai.EmbeddingProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -34,15 +35,22 @@ public class RedisSearchIndexInitializer implements ApplicationListener<Applicat
 
     private static final Logger log = LoggerFactory.getLogger(RedisSearchIndexInitializer.class);
 
-    public static final String INDEX_NAME = "idx:post:embedding";
-    public static final String KEY_PREFIX = "embedding:post:";
+    /** Compute the RediSearch index name for a given provider/dim. */
+    public static String indexName(String providerKey, int dim) {
+        return "idx:post:embedding:" + providerKey + ":" + dim;
+    }
+
+    /** Compute the Redis hash key prefix scanned by the index for this provider/dim. */
+    public static String keyPrefix(String providerKey, int dim) {
+        return "embedding:post:" + providerKey + ":" + dim + ":";
+    }
 
     private final StringRedisTemplate redis;
-    private final EmbeddingProperties props;
+    private final EmbeddingProvider embeddingProvider;
 
-    public RedisSearchIndexInitializer(StringRedisTemplate redis, EmbeddingProperties props) {
+    public RedisSearchIndexInitializer(StringRedisTemplate redis, EmbeddingProvider embeddingProvider) {
         this.redis = redis;
-        this.props = props;
+        this.embeddingProvider = embeddingProvider;
     }
 
     @Override
@@ -54,11 +62,15 @@ public class RedisSearchIndexInitializer implements ApplicationListener<Applicat
     }
 
     private void createIndexIdempotent(RedisConnection conn) {
-        String dim = String.valueOf(props.getVectorDim());
+        String providerKey = embeddingProvider.providerKey();
+        int vectorDim = embeddingProvider.vectorDim();
+        String indexName = indexName(providerKey, vectorDim);
+        String keyPrefix = keyPrefix(providerKey, vectorDim);
+        String dim = String.valueOf(vectorDim);
         byte[][] args = new byte[][] {
-            bytes(INDEX_NAME),
+            bytes(indexName),
             bytes("ON"), bytes("HASH"),
-            bytes("PREFIX"), bytes("1"), bytes(KEY_PREFIX),
+            bytes("PREFIX"), bytes("1"), bytes(keyPrefix),
             bytes("SCHEMA"),
             bytes("author_uid"), bytes("TAG"),
             bytes("created"), bytes("NUMERIC"), bytes("SORTABLE"),
@@ -73,10 +85,10 @@ public class RedisSearchIndexInitializer implements ApplicationListener<Applicat
         };
         try {
             conn.execute("FT.CREATE", args);
-            log.info("Created RediSearch index {} (dim={})", INDEX_NAME, dim);
+            log.info("Created RediSearch index {} (dim={})", indexName, dim);
         } catch (RuntimeException e) {
             if (isIndexAlreadyExists(e)) {
-                log.debug("Index {} already exists; skipping creation", INDEX_NAME);
+                log.debug("Index {} already exists; skipping creation", indexName);
             } else if (isUnknownCommand(e)) {
                 throw new IllegalStateException(
                     "Redis server does not support FT.CREATE. The RediSearch module is required. " +

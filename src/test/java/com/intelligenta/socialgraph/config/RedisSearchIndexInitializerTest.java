@@ -28,9 +28,10 @@ class RedisSearchIndexInitializerTest extends RedisStackIntegrationTest {
             return flattenToStrings(raw);
         });
 
-        assertTrue(indexes != null && indexes.contains(RedisSearchIndexInitializer.INDEX_NAME),
-            () -> "Expected FT._LIST to contain " + RedisSearchIndexInitializer.INDEX_NAME
-                  + " but got: " + indexes);
+        // Default install uses the sidecar provider at 1152 dim.
+        String expected = RedisSearchIndexInitializer.indexName("sidecar", 1152);
+        assertTrue(indexes != null && indexes.contains(expected),
+            () -> "Expected FT._LIST to contain " + expected + " but got: " + indexes);
     }
 
     @Test
