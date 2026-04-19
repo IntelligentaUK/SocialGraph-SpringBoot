@@ -15,5 +15,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/embed/text", post(embed::embed_text))
         .route("/embed/image-text", post(embed::embed_image_text))
         .route("/summarize", post(summarize::summarize))
+        .route("/summarize/audio", post(summarize::summarize_audio))
+        .route("/summarize/video", post(summarize::summarize_video))
         .with_state(state)
 }

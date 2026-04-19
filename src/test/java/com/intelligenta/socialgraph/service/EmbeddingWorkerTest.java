@@ -1,6 +1,8 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.ai.AudioSummarizer;
 import com.intelligenta.socialgraph.ai.EmbeddingProvider;
+import com.intelligenta.socialgraph.ai.VideoSummarizer;
 import com.intelligenta.socialgraph.ai.VisualSummarizer;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +50,8 @@ class EmbeddingWorkerTest {
 
     @Mock EmbeddingProvider embeddingProvider;
     @Mock VisualSummarizer summarizer;
+    @Mock AudioSummarizer audioSummarizer;
+    @Mock VideoSummarizer videoSummarizer;
 
     private EmbeddingProperties props;
     private EmbeddingWorker worker;
@@ -62,7 +66,8 @@ class EmbeddingWorkerTest {
         lenient().when(embeddingProvider.providerKey()).thenReturn("sidecar");
         lenient().when(embeddingProvider.vectorDim()).thenReturn(1152);
         props = new EmbeddingProperties();
-        worker = new EmbeddingWorker(redis, binaryRedis, embeddingProvider, summarizer, props);
+        worker = new EmbeddingWorker(redis, binaryRedis, embeddingProvider, summarizer,
+            audioSummarizer, videoSummarizer, props);
     }
 
     /** Index-namespaced key prefix matching the default sidecar/1152 mock setup. */
@@ -108,6 +113,7 @@ class EmbeddingWorkerTest {
         Map<Object, Object> post = new LinkedHashMap<>();
         post.put("id", "post-p");
         post.put("uid", "u-2");
+        post.put("type", "photo");
         post.put("content", "a nice pic");
         post.put("created", "1700000100");
         when(hashOperations.entries("post:post-p")).thenReturn(post);
@@ -120,7 +126,7 @@ class EmbeddingWorkerTest {
         float[] textVec = fakeVec(1152, 0.3f);
         when(embeddingProvider.embedImageAndText("https://cdn/a.png", "a picture of something"))
             .thenReturn(java.util.Optional.of(combined));
-        when(embeddingProvider.embedText("a nice pic")).thenReturn(textVec);
+        when(embeddingProvider.embedText("a nice pic\na picture of something")).thenReturn(textVec);
 
         @SuppressWarnings({"unchecked", "rawtypes"})
         MapRecord<String, Object, Object> rec = (MapRecord) MapRecord.create(
@@ -132,6 +138,76 @@ class EmbeddingWorkerTest {
         verify(hashOperations).put(KEY_PREFIX + "post-p", "gemma_summary", "a picture of something");
         verify(binaryHashOperations).put(eq(KEY_PREFIX + "post-p"), eq("combined_vec"), any(byte[].class));
         verify(binaryHashOperations).put(eq(KEY_PREFIX + "post-p"), eq("text_vec"), any(byte[].class));
+        verify(streamOperations).acknowledge(EmbeddingWorker.STREAM, EmbeddingWorker.GROUP, rec.getId());
+    }
+
+    @Test
+    void processWritesAudioSummaryAndTextVecForAudioPost() {
+        Map<Object, Object> post = new LinkedHashMap<>();
+        post.put("id", "post-a");
+        post.put("uid", "u-a");
+        post.put("type", "audio");
+        post.put("url", "https://cdn/clip.mp3");
+        post.put("content", "my podcast episode");
+        post.put("created", "1700000200");
+        when(hashOperations.entries("post:post-a")).thenReturn(post);
+        when(listOperations.range("post:post-a:images", 0, props.getImagesForEmbedding() - 1))
+            .thenReturn(List.of());
+        when(audioSummarizer.summarize("my podcast episode", "https://cdn/clip.mp3"))
+            .thenReturn("an interview about AI");
+        float[] textVec = fakeVec(1152, 0.4f);
+        when(embeddingProvider.embedText("my podcast episode\nan interview about AI"))
+            .thenReturn(textVec);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        MapRecord<String, Object, Object> rec = (MapRecord) MapRecord.create(
+            EmbeddingWorker.STREAM, Map.of("postId", (Object) "post-a", "authorUid", "u-a"))
+            .withId(RecordId.of("4-0"));
+
+        worker.process(rec);
+
+        verify(audioSummarizer).summarize("my podcast episode", "https://cdn/clip.mp3");
+        verify(videoSummarizer, never()).summarize(any(), any());
+        verify(summarizer, never()).summarize(any(), anyList());
+        verify(hashOperations).put(KEY_PREFIX + "post-a", "audio_summary", "an interview about AI");
+        verify(binaryHashOperations).put(eq(KEY_PREFIX + "post-a"), eq("text_vec"), any(byte[].class));
+        verify(binaryHashOperations, never())
+            .put(eq(KEY_PREFIX + "post-a"), eq("combined_vec"), any());
+        verify(streamOperations).acknowledge(EmbeddingWorker.STREAM, EmbeddingWorker.GROUP, rec.getId());
+    }
+
+    @Test
+    void processWritesVideoSummaryAndTextVecForVideoPost() {
+        Map<Object, Object> post = new LinkedHashMap<>();
+        post.put("id", "post-v");
+        post.put("uid", "u-v");
+        post.put("type", "video");
+        post.put("url", "https://cdn/clip.mp4");
+        post.put("content", "beach day");
+        post.put("created", "1700000300");
+        when(hashOperations.entries("post:post-v")).thenReturn(post);
+        when(listOperations.range("post:post-v:images", 0, props.getImagesForEmbedding() - 1))
+            .thenReturn(List.of());
+        when(videoSummarizer.summarize("beach day", "https://cdn/clip.mp4"))
+            .thenReturn("a dog running on sand");
+        float[] textVec = fakeVec(1152, 0.5f);
+        when(embeddingProvider.embedText("beach day\na dog running on sand"))
+            .thenReturn(textVec);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        MapRecord<String, Object, Object> rec = (MapRecord) MapRecord.create(
+            EmbeddingWorker.STREAM, Map.of("postId", (Object) "post-v", "authorUid", "u-v"))
+            .withId(RecordId.of("5-0"));
+
+        worker.process(rec);
+
+        verify(videoSummarizer).summarize("beach day", "https://cdn/clip.mp4");
+        verify(audioSummarizer, never()).summarize(any(), any());
+        verify(summarizer, never()).summarize(any(), anyList());
+        verify(hashOperations).put(KEY_PREFIX + "post-v", "video_summary", "a dog running on sand");
+        verify(binaryHashOperations).put(eq(KEY_PREFIX + "post-v"), eq("text_vec"), any(byte[].class));
+        verify(binaryHashOperations, never())
+            .put(eq(KEY_PREFIX + "post-v"), eq("combined_vec"), any());
         verify(streamOperations).acknowledge(EmbeddingWorker.STREAM, EmbeddingWorker.GROUP, rec.getId());
     }
 

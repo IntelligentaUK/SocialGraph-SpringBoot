@@ -127,6 +127,14 @@ public class ShareService {
     }
 
     /**
+     * Share an audio clip.
+     */
+    public Map<String, String> shareAudio(String authenticatedUser, String content, String url) {
+        List<String> urls = url == null ? null : List.of(url);
+        return createStatusUpdate(authenticatedUser, content, "audio", urls, null, null, null);
+    }
+
+    /**
      * Share a text-only post.
      */
     public Map<String, String> shareText(String authenticatedUser, String content) {
@@ -295,12 +303,13 @@ public class ShareService {
     }
 
     /**
-     * Decides whether the post produces an embedding. Videos are excluded (the
-     * sidecar only handles still images + text). Posts with neither content nor
-     * images are excluded.
+     * Decides whether the post produces an embedding. Audio and video posts
+     * are included (the sidecar's E4B model handles them via
+     * {@code /summarize/audio} and {@code /summarize/video}). Text/reply/reshare
+     * posts without any content are excluded.
      */
     private static boolean shouldEmitEmbedding(String type, String content, int imageCount) {
-        if ("video".equals(type)) return false;
+        if ("audio".equals(type) || "video".equals(type)) return true;
         boolean hasContent = content != null && !content.isBlank();
         return hasContent || imageCount > 0;
     }

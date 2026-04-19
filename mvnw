@@ -28,7 +28,12 @@ DIST_URL=$(grep "distributionUrl" "$WRAPPER_PROPERTIES" | cut -d'=' -f2)
 
 # Use Maven wrapper jar or fallback to direct download
 if [ -f "$WRAPPER_JAR" ]; then
-    exec java "-Dmaven.multiModuleProjectDirectory=$SCRIPT_DIR" -classpath "$WRAPPER_JAR" org.apache.maven.wrapper.MavenWrapperMain "$@"
+    exec java \
+        --enable-native-access=ALL-UNNAMED \
+        --sun-misc-unsafe-memory-access=allow \
+        "-Dmaven.multiModuleProjectDirectory=$SCRIPT_DIR" \
+        -classpath "$WRAPPER_JAR" \
+        org.apache.maven.wrapper.MavenWrapperMain "$@"
 else
     # Fallback: Download and extract Maven directly
     MAVEN_HOME="$HOME/.m2/wrapper/dists/apache-maven-3.9.6"

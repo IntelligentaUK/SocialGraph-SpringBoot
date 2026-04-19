@@ -75,6 +75,8 @@ class StatusControllerTest {
             .thenReturn(Map.of("type", "photo"));
         when(shareService.shareVideo("viewer-uid", "caption", "https://cdn.example/video.mp4"))
             .thenReturn(Map.of("type", "video"));
+        when(shareService.shareAudio("viewer-uid", "caption", "https://cdn.example/clip.mp3"))
+            .thenReturn(Map.of("type", "audio"));
 
         mockMvc.perform(post("/api/status")
                 .param("type", "text")
@@ -98,6 +100,20 @@ class StatusControllerTest {
                 .with(TestRequestPostProcessors.authenticatedUser("viewer-uid")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.type").value("video"));
+
+        mockMvc.perform(post("/api/status")
+                .param("type", "audio")
+                .param("content", "caption")
+                .param("url", "https://cdn.example/clip.mp3")
+                .with(TestRequestPostProcessors.authenticatedUser("viewer-uid")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.type").value("audio"));
+
+        mockMvc.perform(post("/api/status")
+                .param("type", "audio")
+                .param("content", "caption")
+                .with(TestRequestPostProcessors.authenticatedUser("viewer-uid")))
+            .andExpect(status().isBadRequest());
 
         mockMvc.perform(post("/api/status")
                 .param("type", "text")

@@ -45,3 +45,63 @@ pub async fn summarize(
 
     Ok(Json(SummarizeResponse { summary }))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct SummarizeAvRequest {
+    pub status_text: String,
+    pub media_url: String,
+}
+
+pub async fn summarize_audio(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SummarizeAvRequest>,
+) -> AppResult<Json<SummarizeResponse>> {
+    if req.media_url.trim().is_empty() {
+        return Err(AppError::InvalidRequest(
+            "media_url must be non-empty".into(),
+        ));
+    }
+
+    let gemma_ev = state
+        .gemma_ev
+        .load_full()
+        .ok_or(AppError::ModelNotLoaded)?;
+
+    let status_text = req.status_text.clone();
+    let media_url = req.media_url.clone();
+    let summary = tokio::task::spawn_blocking(move || {
+        gemma_ev.summarize_audio(&status_text, &media_url)
+    })
+    .await
+    .map_err(|e| AppError::Inference(format!("join error: {e}")))?
+    .map_err(|e| AppError::Inference(e.to_string()))?;
+
+    Ok(Json(SummarizeResponse { summary }))
+}
+
+pub async fn summarize_video(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SummarizeAvRequest>,
+) -> AppResult<Json<SummarizeResponse>> {
+    if req.media_url.trim().is_empty() {
+        return Err(AppError::InvalidRequest(
+            "media_url must be non-empty".into(),
+        ));
+    }
+
+    let gemma_ev = state
+        .gemma_ev
+        .load_full()
+        .ok_or(AppError::ModelNotLoaded)?;
+
+    let status_text = req.status_text.clone();
+    let media_url = req.media_url.clone();
+    let summary = tokio::task::spawn_blocking(move || {
+        gemma_ev.summarize_video(&status_text, &media_url)
+    })
+    .await
+    .map_err(|e| AppError::Inference(format!("join error: {e}")))?
+    .map_err(|e| AppError::Inference(e.to_string()))?;
+
+    Ok(Json(SummarizeResponse { summary }))
+}

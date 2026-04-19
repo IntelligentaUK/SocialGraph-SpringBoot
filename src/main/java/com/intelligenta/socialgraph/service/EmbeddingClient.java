@@ -5,6 +5,7 @@ import com.intelligenta.socialgraph.exception.EmbeddingSidecarException;
 import com.intelligenta.socialgraph.model.embedding.EmbedImageTextRequest;
 import com.intelligenta.socialgraph.model.embedding.EmbedResponse;
 import com.intelligenta.socialgraph.model.embedding.EmbedTextRequest;
+import com.intelligenta.socialgraph.model.embedding.SummarizeAvRequest;
 import com.intelligenta.socialgraph.model.embedding.SummarizeRequest;
 import com.intelligenta.socialgraph.model.embedding.SummarizeResponse;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -70,6 +71,38 @@ public class EmbeddingClient {
             return resp == null ? "" : (resp.summary() == null ? "" : resp.summary());
         } catch (RestClientException e) {
             throw new EmbeddingSidecarException("summarize failed", e);
+        }
+    }
+
+    /**
+     * Generate a retrieval-oriented summary of an audio clip by URL. The
+     * sidecar's {@code gemma_ev} model handles the multimodal call; a 503
+     * means {@code ENABLE_AUDIO_VIDEO_SUMMARY=false} on the sidecar.
+     */
+    public String summarizeAudio(String statusText, String mediaUrl) {
+        return summarizeAv("/summarize/audio", statusText, mediaUrl, "summarizeAudio");
+    }
+
+    /**
+     * Generate a retrieval-oriented summary of a video clip by URL. The
+     * sidecar's {@code gemma_ev} model handles the multimodal call; a 503
+     * means {@code ENABLE_AUDIO_VIDEO_SUMMARY=false} on the sidecar.
+     */
+    public String summarizeVideo(String statusText, String mediaUrl) {
+        return summarizeAv("/summarize/video", statusText, mediaUrl, "summarizeVideo");
+    }
+
+    private String summarizeAv(String path, String statusText, String mediaUrl, String opName) {
+        try {
+            SummarizeResponse resp = summarizeClient.post()
+                .uri(path)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new SummarizeAvRequest(statusText, mediaUrl))
+                .retrieve()
+                .body(SummarizeResponse.class);
+            return resp == null ? "" : (resp.summary() == null ? "" : resp.summary());
+        } catch (RestClientException e) {
+            throw new EmbeddingSidecarException(opName + " failed", e);
         }
     }
 

@@ -191,7 +191,7 @@ Failed messages are retried (in-memory counter); on the Nth failure
 
 | Key | Type | Fields / contents | Owner | TTL |
 |-----|------|-------------------|-------|-----|
-| `embedding:post:<provider>:<dim>:<postId>` | hash | `author_uid` (UTF-8), `created` (UTF-8 unix seconds), `combined_vec` (binary: N × float32 LE; omitted for text-only posts), `text_vec` (binary: N × float32 LE), `gemma_summary` (UTF-8) | `EmbeddingWorker.process` | **691 200 s (8 days)** |
+| `embedding:post:<provider>:<dim>:<postId>` | hash | `author_uid` (UTF-8), `created` (UTF-8 unix seconds), `combined_vec` (binary: N × float32 LE; only for image posts), `text_vec` (binary: N × float32 LE; caption concatenated with any available summaries), `gemma_summary` (UTF-8; only for image posts), `audio_summary` (UTF-8; only for `type=audio` posts when `ai.audio.provider` ≠ `none`), `video_summary` (UTF-8; only for `type=video` posts when `ai.video.provider` ≠ `none`) | `EmbeddingWorker.process` | **691 200 s (8 days)** |
 | `idx:post:embedding:<provider>:<dim>` | RediSearch index over prefix `embedding:post:<provider>:<dim>:` | see schema below | `RedisSearchIndexInitializer` | — |
 
 The index name and key prefix both encode the active embedding provider

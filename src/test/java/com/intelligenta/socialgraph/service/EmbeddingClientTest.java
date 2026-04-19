@@ -85,4 +85,44 @@ class EmbeddingClientTest {
             () -> client.embedText("boom"));
         assertEquals("embedText failed", ex.getMessage());
     }
+
+    @Test
+    void summarizeAudioSendsStatusTextAndMediaUrlAndParsesResponse() {
+        summarizeServer.expect(requestTo("http://localhost:8000/summarize/audio"))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(jsonPath("$.status_text").value("my podcast"))
+            .andExpect(jsonPath("$.media_url").value("https://cdn/clip.mp3"))
+            .andRespond(withSuccess("{\"summary\":\"an interview about AI\"}",
+                MediaType.APPLICATION_JSON));
+
+        String summary = client.summarizeAudio("my podcast", "https://cdn/clip.mp3");
+
+        assertEquals("an interview about AI", summary);
+        summarizeServer.verify();
+    }
+
+    @Test
+    void summarizeVideoSendsStatusTextAndMediaUrlAndParsesResponse() {
+        summarizeServer.expect(requestTo("http://localhost:8000/summarize/video"))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(jsonPath("$.status_text").value("dog at beach"))
+            .andExpect(jsonPath("$.media_url").value("https://cdn/clip.mp4"))
+            .andRespond(withSuccess("{\"summary\":\"a dog running on sand\"}",
+                MediaType.APPLICATION_JSON));
+
+        String summary = client.summarizeVideo("dog at beach", "https://cdn/clip.mp4");
+
+        assertEquals("a dog running on sand", summary);
+        summarizeServer.verify();
+    }
+
+    @Test
+    void summarizeAudioNonSuccessSurfacesAsEmbeddingSidecarException() {
+        summarizeServer.expect(requestTo("http://localhost:8000/summarize/audio"))
+            .andRespond(withServerError());
+
+        EmbeddingSidecarException ex = assertThrows(EmbeddingSidecarException.class,
+            () -> client.summarizeAudio("x", "https://cdn/clip.mp3"));
+        assertEquals("summarizeAudio failed", ex.getMessage());
+    }
 }

@@ -50,8 +50,9 @@ async fn main() -> anyhow::Result<()> {
 
 fn load_models_async(state: Arc<state::AppState>, cfg: config::Config) {
     let s1 = state.clone();
+    let cfg1 = cfg.clone();
     tokio::task::spawn_blocking(move || {
-        let siglip: Box<dyn models::SiglipModel> = load_siglip(&cfg);
+        let siglip: Box<dyn models::SiglipModel> = load_siglip(&cfg1);
         s1.set_siglip(siglip);
         tracing::info!("siglip loaded");
     });
@@ -62,6 +63,19 @@ fn load_models_async(state: Arc<state::AppState>, cfg: config::Config) {
         s2.set_gemma(gemma);
         tracing::info!("gemma loaded");
     });
+
+    if cfg.enable_audio_video_summary {
+        let s3 = state.clone();
+        tokio::task::spawn_blocking(move || {
+            let gemma_ev: Box<dyn models::GemmaEvModel> = load_gemma_ev();
+            s3.set_gemma_ev(gemma_ev);
+            tracing::info!("gemma_ev loaded");
+        });
+    } else {
+        tracing::info!(
+            "audio/video summarization disabled (set ENABLE_AUDIO_VIDEO_SUMMARY=true to enable)"
+        );
+    }
 }
 
 #[cfg(not(feature = "models"))]
@@ -96,6 +110,22 @@ fn load_gemma() -> Box<dyn models::GemmaModel> {
 fn load_gemma() -> Box<dyn models::GemmaModel> {
     tracing::warn!("`models` feature enabled but real Gemma loader is TODO; falling back to stub");
     Box::new(models::StubGemma)
+}
+
+#[cfg(not(feature = "models"))]
+fn load_gemma_ev() -> Box<dyn models::GemmaEvModel> {
+    tracing::warn!(
+        "running without `models` feature — Gemma-EV returning stub audio/video summaries"
+    );
+    Box::new(models::StubGemmaEv)
+}
+
+#[cfg(feature = "models")]
+fn load_gemma_ev() -> Box<dyn models::GemmaEvModel> {
+    tracing::warn!(
+        "`models` feature enabled but real Gemma-EV loader is TODO; falling back to stub"
+    );
+    Box::new(models::StubGemmaEv)
 }
 
 async fn shutdown_signal() {

@@ -16,6 +16,10 @@ pub struct Config {
     pub max_image_bytes: u64,
     pub siglip_model_id: String,
     pub gemma_model_id: String,
+    pub gemma_ev_model_id: String,
+    pub enable_audio_video_summary: bool,
+    pub max_audio_seconds: u64,
+    pub max_video_seconds: u64,
     pub vector_dim: usize,
 }
 
@@ -39,7 +43,17 @@ impl Config {
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid MAX_IMAGE_BYTES: {e}"))?,
             siglip_model_id: env("SIGLIP_MODEL_ID", "google/siglip2-giant-opt-patch16-384"),
-            gemma_model_id: env("GEMMA_MODEL_ID", "google/gemma-3-4b-it"),
+            gemma_model_id: env("GEMMA_MODEL_ID", "google/gemma-4-31B-it"),
+            gemma_ev_model_id: env("GEMMA_EV_MODEL_ID", "google/gemma-4-E4B-it"),
+            enable_audio_video_summary: env("ENABLE_AUDIO_VIDEO_SUMMARY", "false")
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid ENABLE_AUDIO_VIDEO_SUMMARY: {e}"))?,
+            max_audio_seconds: env("MAX_AUDIO_SECONDS", "600")
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid MAX_AUDIO_SECONDS: {e}"))?,
+            max_video_seconds: env("MAX_VIDEO_SECONDS", "300")
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid MAX_VIDEO_SECONDS: {e}"))?,
             vector_dim: env("VECTOR_DIM", "1152")
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid VECTOR_DIM: {e}"))?,

@@ -18,7 +18,7 @@ public final class DefaultModelCatalog {
 
     private DefaultModelCatalog() {}
 
-    public enum Capability { EMBEDDING, CHAT, IMAGE, MODERATION }
+    public enum Capability { EMBEDDING, CHAT, IMAGE, MODERATION, AUDIO, VIDEO }
 
     public record Resolved(String model, int dimensions) {}
 
@@ -47,6 +47,8 @@ public final class DefaultModelCatalog {
             case CHAT      -> chatDefault(p);
             case IMAGE     -> imageDefault(p);
             case MODERATION -> moderationDefault(p);
+            case AUDIO     -> audioDefault(p);
+            case VIDEO     -> videoDefault(p);
         };
     }
 
@@ -73,19 +75,19 @@ public final class DefaultModelCatalog {
     private static Resolved chatDefault(String p) {
         // Dimensions is unused for chat; carry 0.
         return switch (p) {
-            case "openai"                   -> new Resolved("gpt-4o-mini", 0);
-            case "azure-openai"             -> new Resolved("gpt-4o-mini", 0);
-            case "anthropic"                -> new Resolved("claude-3-5-sonnet-latest", 0);
+            case "openai"                   -> new Resolved("gpt-5.4-mini-2026-03-17", 0);
+            case "azure-openai"             -> new Resolved("gpt-5.4-mini-2026-03-17", 0);
+            case "anthropic"                -> new Resolved("claude-opus-4-7", 0);
             case "google-genai",
-                 "vertex-ai-gemini"         -> new Resolved("gemini-1.5-flash", 0);
-            case "bedrock", "bedrock-converse" -> new Resolved("anthropic.claude-3-5-sonnet-20241022-v2:0", 0);
-            case "ollama"                   -> new Resolved("llama3.2-vision:11b", 0);
+                 "vertex-ai-gemini"         -> new Resolved("gemini-3.1-flash-lite-preview", 0);
+            case "bedrock", "bedrock-converse" -> new Resolved("anthropic.claude-opus-4-7", 0);
+            case "ollama"                   -> new Resolved("gemma4:e2b", 0);
             case "mistral-ai"               -> new Resolved("mistral-large-latest", 0);
             case "zhipuai"                  -> new Resolved("glm-4-plus", 0);
             case "minimax"                  -> new Resolved("abab6.5-chat", 0);
             case "oci-genai"                -> new Resolved("cohere.command-r-plus", 0);
             case "deepseek"                 -> new Resolved("deepseek-chat", 0);
-            case "sidecar"                  -> new Resolved("google/gemma-3-4b-it", 0);
+            case "sidecar"                  -> new Resolved("google/gemma-4-31B-it", 0);
             case "none"                     -> new Resolved("", 0);
             default                         -> NONE;
         };
@@ -106,6 +108,30 @@ public final class DefaultModelCatalog {
         return switch (p) {
             case "openai"                   -> new Resolved("omni-moderation-latest", 0);
             case "mistral-ai"               -> new Resolved("mistral-moderation-latest", 0);
+            case "none"                     -> new Resolved("", 0);
+            default                         -> NONE;
+        };
+    }
+
+    private static Resolved audioDefault(String p) {
+        // Dimensions is unused for audio summaries; carry 0.
+        return switch (p) {
+            case "sidecar"                  -> new Resolved("google/gemma-4-E4B-it", 0);
+            case "openai"                   -> new Resolved("whisper-1", 0);
+            case "azure-openai"             -> new Resolved("whisper-1", 0);
+            case "google-genai",
+                 "vertex-ai-gemini"         -> new Resolved("gemini-3.1-flash-lite-preview", 0);
+            case "none"                     -> new Resolved("", 0);
+            default                         -> NONE;
+        };
+    }
+
+    private static Resolved videoDefault(String p) {
+        // Dimensions is unused for video summaries; carry 0.
+        return switch (p) {
+            case "sidecar"                  -> new Resolved("google/gemma-4-E4B-it", 0);
+            case "google-genai",
+                 "vertex-ai-gemini"         -> new Resolved("gemini-3.1-flash-lite-preview", 0);
             case "none"                     -> new Resolved("", 0);
             default                         -> NONE;
         };

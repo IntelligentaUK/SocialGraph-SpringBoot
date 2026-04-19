@@ -1,6 +1,8 @@
 package com.intelligenta.socialgraph.service;
 
+import com.intelligenta.socialgraph.ai.AudioSummarizer;
 import com.intelligenta.socialgraph.ai.EmbeddingProvider;
+import com.intelligenta.socialgraph.ai.VideoSummarizer;
 import com.intelligenta.socialgraph.ai.VisualSummarizer;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
 import com.intelligenta.socialgraph.config.RedisSearchIndexInitializer;
@@ -46,6 +48,8 @@ public class EmbeddingWorker {
     private final RedisTemplate<String, byte[]> binaryRedis;
     private final EmbeddingProvider embeddingProvider;
     private final VisualSummarizer summarizer;
+    private final AudioSummarizer audioSummarizer;
+    private final VideoSummarizer videoSummarizer;
     private final EmbeddingProperties props;
     private final Map<String, Integer> retries = new ConcurrentHashMap<>();
 
@@ -56,11 +60,15 @@ public class EmbeddingWorker {
                            RedisTemplate<String, byte[]> binaryRedisTemplate,
                            EmbeddingProvider embeddingProvider,
                            VisualSummarizer summarizer,
+                           AudioSummarizer audioSummarizer,
+                           VideoSummarizer videoSummarizer,
                            EmbeddingProperties props) {
         this.redis = redis;
         this.binaryRedis = binaryRedisTemplate;
         this.embeddingProvider = embeddingProvider;
         this.summarizer = summarizer;
+        this.audioSummarizer = audioSummarizer;
+        this.videoSummarizer = videoSummarizer;
         this.props = props;
     }
 
@@ -131,29 +139,45 @@ public class EmbeddingWorker {
 
         String content = post.get("content") == null ? "" : String.valueOf(post.get("content"));
         String created = String.valueOf(post.get("created"));
+        String type = post.get("type") == null ? "" : String.valueOf(post.get("type"));
+        String url = post.get("url") == null ? "" : String.valueOf(post.get("url"));
 
         List<String> images = redis.opsForList().range(
             "post:" + postId + ":images", 0, props.getImagesForEmbedding() - 1);
         if (images == null) images = List.of();
 
-        String summary = images.isEmpty()
-            ? (content.isBlank() ? " " : content)
-            : summarizer.summarize(content, images);
+        String gemmaSummary = images.isEmpty() ? "" : summarizer.summarize(content, images);
+        String audioSummary = "audio".equals(type) && !url.isBlank()
+            ? audioSummarizer.summarize(content, url) : "";
+        String videoSummary = "video".equals(type) && !url.isBlank()
+            ? videoSummarizer.summarize(content, url) : "";
 
         float[] combined;
         if (images.isEmpty()) {
             combined = null;
         } else {
-            combined = embeddingProvider.embedImageAndText(images.get(0), summary)
-                .orElseGet(() -> embeddingProvider.embedText(summary));
+            String combinedText = gemmaSummary.isBlank()
+                ? (content.isBlank() ? " " : content) : gemmaSummary;
+            combined = embeddingProvider.embedImageAndText(images.get(0), combinedText)
+                .orElseGet(() -> embeddingProvider.embedText(combinedText));
         }
-        float[] text = embeddingProvider.embedText(content.isBlank() ? " " : content);
+
+        float[] text = embeddingProvider.embedText(
+            concatenateForTextVec(content, gemmaSummary, audioSummary, videoSummary));
 
         String key = RedisSearchIndexInitializer.keyPrefix(
             embeddingProvider.providerKey(), embeddingProvider.vectorDim()) + postId;
         redis.opsForHash().put(key, "author_uid", uid);
         redis.opsForHash().put(key, "created", created);
-        redis.opsForHash().put(key, "gemma_summary", summary);
+        if (!gemmaSummary.isBlank()) {
+            redis.opsForHash().put(key, "gemma_summary", gemmaSummary);
+        }
+        if (!audioSummary.isBlank()) {
+            redis.opsForHash().put(key, "audio_summary", audioSummary);
+        }
+        if (!videoSummary.isBlank()) {
+            redis.opsForHash().put(key, "video_summary", videoSummary);
+        }
         if (combined != null) {
             binaryRedis.opsForHash().put(key, "combined_vec", toLeBytes(combined));
         }
@@ -161,6 +185,21 @@ public class EmbeddingWorker {
         redis.expire(key, props.getEmbeddingTtlSeconds(), TimeUnit.SECONDS);
 
         redis.opsForStream().acknowledge(STREAM, GROUP, rec.getId());
+    }
+
+    private static String concatenateForTextVec(String content, String gemma, String audio, String video) {
+        StringBuilder sb = new StringBuilder();
+        appendIfPresent(sb, content);
+        appendIfPresent(sb, gemma);
+        appendIfPresent(sb, audio);
+        appendIfPresent(sb, video);
+        return sb.length() == 0 ? " " : sb.toString();
+    }
+
+    private static void appendIfPresent(StringBuilder sb, String s) {
+        if (s == null || s.isBlank()) return;
+        if (sb.length() > 0) sb.append('\n');
+        sb.append(s);
     }
 
     private void onFailure(MapRecord<String, Object, Object> rec, Exception e) {

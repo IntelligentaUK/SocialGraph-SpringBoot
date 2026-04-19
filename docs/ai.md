@@ -1,6 +1,6 @@
 # AI provider configuration
 
-SocialGraph exposes four AI capabilities that each route to a provider you pick
+SocialGraph exposes six AI capabilities that each route to a provider you pick
 per install:
 
 | Capability | Property | Used by |
@@ -9,6 +9,8 @@ per install:
 | Chat (visual summary) | `ai.chat.provider` | Multi-image post summarisation before SigLIP / text embedding |
 | Image generation | `ai.image.provider` | `POST /api/images/generate` (returns 503 when set to `none`) |
 | Moderation | `ai.moderation.provider` | Inline check in `ShareService.createStatusUpdate`; flagged content returns 400 `content_blocked` |
+| Audio summary | `ai.audio.provider` | `type=audio` post summarisation via the sidecar's E4B Gemma slot (concatenated into `text_vec` for retrieval) |
+| Video summary | `ai.video.provider` | `type=video` post summarisation via the sidecar's E4B Gemma slot (concatenated into `text_vec` for retrieval) |
 
 Each capability independently picks its provider. You can, for example, run
 OpenAI embeddings, Anthropic chat summaries, Stability image generation and
@@ -22,18 +24,18 @@ per-capability. Leave them blank to get the defaults below (from
 
 | Provider key | Embedding default | Chat default (✓ vision) | Image default | Moderation default |
 |:---|:---|:---|:---|:---|
-| `sidecar` (default) | siglip2-giant (1152d) | gemma-3-4b-it ✓ | — | — |
-| `openai` | `text-embedding-3-small` (1536d) | `gpt-4o-mini` ✓ | `dall-e-3` | `omni-moderation-latest` |
-| `azure-openai` | `text-embedding-3-small` (1536d) | `gpt-4o-mini` ✓ | `dall-e-3` | — |
-| `anthropic` | — | `claude-3-5-sonnet-latest` ✓ | — | — |
-| `google-genai` | — | `gemini-1.5-flash` ✓ | — | — |
+| `sidecar` (default) | siglip2-giant (1152d) | gemma-4-31B-it ✓ | — | — |
+| `openai` | `text-embedding-3-small` (1536d) | `gpt-5.4-mini-2026-03-17` ✓ | `dall-e-3` | `omni-moderation-latest` |
+| `azure-openai` | `text-embedding-3-small` (1536d) | `gpt-5.4-mini-2026-03-17` ✓ | `dall-e-3` | — |
+| `anthropic` | — | `claude-opus-4-7` ✓ | — | — |
+| `google-genai` | — | `gemini-3.1-flash-lite-preview` ✓ | — | — |
 | `google-genai-embedding` | `text-embedding-005` (768d) | — | — | — |
-| `vertex-ai-gemini` | — | `gemini-1.5-flash` ✓ | — | — |
+| `vertex-ai-gemini` | — | `gemini-3.1-flash-lite-preview` ✓ | — | — |
 | `vertex-ai-embedding` | `text-embedding-005` (768d) | — | — | — |
-| `bedrock-converse` | — | `anthropic.claude-3-5-sonnet-20241022-v2:0` ✓ | — | — |
+| `bedrock-converse` | — | `anthropic.claude-opus-4-7` ✓ | — | — |
 | `bedrock-titan` | `amazon.titan-embed-text-v2:0` (1024d) | — | — | — |
 | `bedrock-cohere` | `cohere.embed-english-v3.0` (1024d) | — | — | — |
-| `ollama` | `nomic-embed-text` (768d) | `llama3.2-vision:11b` ✓ | — | — |
+| `ollama` | `nomic-embed-text` (768d) | `gemma4:e2b` ✓ | — | — |
 | `mistral-ai` | `mistral-embed` (1024d) | `mistral-large-latest` | — | `mistral-moderation-latest` |
 | `stability-ai` | — | — | `stable-diffusion-xl-1024-v1-0` | — |
 | `zhipuai` | `embedding-3` (2048d) | `glm-4-plus` | `cogview-3` | — |
@@ -47,6 +49,26 @@ per-capability. Leave them blank to get the defaults below (from
 `—` means the provider doesn't expose that capability in Spring AI 2.0.
 Selecting an unsupported pair (e.g. `ai.image.provider=anthropic`) fails
 startup with a clear error rather than silently falling back.
+
+### Audio / video defaults
+
+The sidecar hosts a second Gemma slot (`ENABLE_AUDIO_VIDEO_SUMMARY=true`)
+loaded with `google/gemma-4-E4B-it`, which handles both capabilities.
+Cloud alternatives resolve through `DefaultModelCatalog` but their Spring-AI
+bean wiring is pending a follow-up refactor of `VisualSummarizerConfig` to
+use provider-specific `ChatModel` types (the current config's generic
+`ChatModel` autowire becomes ambiguous once two provider auto-configs are
+active simultaneously). Until that lands, only `sidecar` and `none` are
+concretely wired for `ai.audio.provider` / `ai.video.provider`.
+
+| Provider key | Audio default | Video default |
+|:---|:---|:---|
+| `sidecar` (default) | `google/gemma-4-E4B-it` | `google/gemma-4-E4B-it` |
+| `openai` | `whisper-1` *(wiring pending)* | — |
+| `azure-openai` | `whisper-1` *(wiring pending)* | — |
+| `google-genai` | `gemini-3.1-flash-lite-preview` *(wiring pending)* | `gemini-3.1-flash-lite-preview` *(wiring pending)* |
+| `vertex-ai-gemini` | `gemini-3.1-flash-lite-preview` *(wiring pending)* | `gemini-3.1-flash-lite-preview` *(wiring pending)* |
+| `none` | disabled (caption passthrough) | disabled (caption passthrough) |
 
 ## Minimal configurations
 

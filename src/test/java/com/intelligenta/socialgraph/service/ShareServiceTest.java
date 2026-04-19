@@ -246,14 +246,37 @@ class ShareServiceTest {
     }
 
     @Test
-    void shareVideoDoesNotXAddToEmbeddingQueue() {
+    void shareVideoXAddsToEmbeddingQueue() {
         when(setOperations.members("user:user-1:followers")).thenReturn(Set.of());
         when(zSetOperations.score("user:social:importance", "user-1")).thenReturn(0.0);
         when(valueOperations.get("user:user-1:connection:edgescore:user-1")).thenReturn("0.0");
 
-        shareService.shareVideo("user-1", "look at my video", "https://cdn.example/v.mp4");
+        Map<String, String> resp = shareService.shareVideo(
+            "user-1", "look at my video", "https://cdn.example/v.mp4");
 
-        verify(streamOperations, never()).add(org.mockito.ArgumentMatchers.<MapRecord<String, String, String>>any());
+        ArgumentCaptor<MapRecord<String, String, String>> captor = ArgumentCaptor.forClass(MapRecord.class);
+        verify(streamOperations).add(captor.capture());
+        MapRecord<String, String, String> rec = captor.getValue();
+        assertEquals("embedding:queue", rec.getStream());
+        assertEquals(resp.get("id"), rec.getValue().get("postId"));
+        assertEquals("user-1", rec.getValue().get("authorUid"));
+    }
+
+    @Test
+    void shareAudioXAddsToEmbeddingQueue() {
+        when(setOperations.members("user:user-1:followers")).thenReturn(Set.of());
+        when(zSetOperations.score("user:social:importance", "user-1")).thenReturn(0.0);
+        when(valueOperations.get("user:user-1:connection:edgescore:user-1")).thenReturn("0.0");
+
+        Map<String, String> resp = shareService.shareAudio(
+            "user-1", "my podcast", "https://cdn.example/clip.mp3");
+
+        ArgumentCaptor<MapRecord<String, String, String>> captor = ArgumentCaptor.forClass(MapRecord.class);
+        verify(streamOperations).add(captor.capture());
+        MapRecord<String, String, String> rec = captor.getValue();
+        assertEquals("embedding:queue", rec.getStream());
+        assertEquals(resp.get("id"), rec.getValue().get("postId"));
+        assertEquals("user-1", rec.getValue().get("authorUid"));
     }
 
     private static final class TestImages {

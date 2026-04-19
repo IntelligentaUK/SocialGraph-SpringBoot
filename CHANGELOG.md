@@ -7,6 +7,18 @@ release. Unreleased work sits at the top.
 
 ### Added
 
+- **Audio and video post summarization** — `type=audio` and `type=video` posts
+  now produce retrieval-oriented summaries alongside the existing image path.
+  The Rust sidecar gains a second Gemma slot (`gemma_ev`, default
+  `google/gemma-4-E4B-it`) behind `ENABLE_AUDIO_VIDEO_SUMMARY=true` exposing
+  `POST /summarize/audio` and `POST /summarize/video`. Two new capabilities
+  `ai.audio.provider` and `ai.video.provider` route to `sidecar` by default;
+  cloud alternatives (Whisper, Gemini) resolve in `DefaultModelCatalog` with
+  Spring-AI wiring pending a follow-up. Summaries are stored as
+  `audio_summary` / `video_summary` Redis hash fields and concatenated into
+  `text_vec` so audio/video posts are searchable via `/api/search/ai` without
+  any new RediSearch index. `ShareService.shouldEmitEmbedding` no longer
+  skips videos; `StatusController` accepts `type=audio` alongside `video`.
 - **Multi-provider AI routing via Spring AI 2.0** — every shipped model starter
   in Spring AI 2.0.0-M4 is bundled (optional) and selectable per-capability via
   `ai.embedding.provider` / `ai.chat.provider` / `ai.image.provider` /

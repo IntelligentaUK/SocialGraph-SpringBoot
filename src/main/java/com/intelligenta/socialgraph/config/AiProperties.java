@@ -29,6 +29,8 @@ public class AiProperties {
     private Capability chat = new Capability();
     private Capability image = new Capability();
     private Capability moderation = new Capability();
+    private Capability audio = new Capability();
+    private Capability video = new Capability();
 
     public Capability getEmbedding() { return embedding; }
     public void setEmbedding(Capability embedding) { this.embedding = embedding; }
@@ -41,6 +43,12 @@ public class AiProperties {
 
     public Capability getModeration() { return moderation; }
     public void setModeration(Capability moderation) { this.moderation = moderation; }
+
+    public Capability getAudio() { return audio; }
+    public void setAudio(Capability audio) { this.audio = audio; }
+
+    public Capability getVideo() { return video; }
+    public void setVideo(Capability video) { this.video = video; }
 
     public static class Capability {
         /**
@@ -64,6 +72,15 @@ public class AiProperties {
         /** Chat only. Null → provider default. */
         private Integer maxTokens;
 
+        /**
+         * Chat only. Reasoning/thinking effort for models that support it
+         * (currently wired for {@code anthropic}). One of {@code off},
+         * {@code low}, {@code medium}, {@code high}; null → provider default
+         * (no thinking override). For Anthropic this maps to a thinking
+         * budget (low≈1024, medium≈6144, high≈16384 tokens).
+         */
+        private String reasoningEffort;
+
         public String getProvider() { return provider; }
         public void setProvider(String provider) { this.provider = provider; }
 
@@ -78,5 +95,8 @@ public class AiProperties {
 
         public Integer getMaxTokens() { return maxTokens; }
         public void setMaxTokens(Integer maxTokens) { this.maxTokens = maxTokens; }
+
+        public String getReasoningEffort() { return reasoningEffort; }
+        public void setReasoningEffort(String reasoningEffort) { this.reasoningEffort = reasoningEffort; }
     }
 }

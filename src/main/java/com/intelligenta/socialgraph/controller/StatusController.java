@@ -116,6 +116,11 @@ public class StatusController {
                 return ResponseEntity.badRequest().build();
             }
             result = shareService.shareVideo(user.getUid(), content, url);
+        } else if ("audio".equals(type)) {
+            if (url == null || url.isBlank()) {
+                return ResponseEntity.badRequest().build();
+            }
+            result = shareService.shareAudio(user.getUid(), content, url);
         } else {
             return ResponseEntity.badRequest().build();
         }

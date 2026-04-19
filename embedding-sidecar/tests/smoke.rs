@@ -28,8 +28,8 @@ mod routes;
 #[path = "../src/state.rs"]
 mod state;
 
-async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
-    let cfg = config::Config {
+fn base_config() -> config::Config {
+    config::Config {
         port: 0,
         model_cache_dir: std::path::PathBuf::from("/tmp/sidecar-test"),
         hf_token: None,
@@ -38,10 +38,17 @@ async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
         max_image_bytes: 10_485_760,
         siglip_model_id: "stub".into(),
         gemma_model_id: "stub".into(),
+        gemma_ev_model_id: "stub".into(),
+        enable_audio_video_summary: false,
+        max_audio_seconds: 600,
+        max_video_seconds: 300,
         vector_dim: 1152,
-    };
+    }
+}
+
+async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
     let http = reqwest::Client::new();
-    let app_state = state::AppState::new(cfg, http);
+    let app_state = state::AppState::new(base_config(), http);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let base = format!("http://{}", addr);
@@ -49,6 +56,26 @@ async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
     // Pre-load stubs synchronously so /healthz is ready by the time we hit it.
     app_state.set_siglip(Box::new(models::StubSiglip::new(1152)));
     app_state.set_gemma(Box::new(models::StubGemma));
+
+    let app = routes::router(Arc::clone(&app_state));
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (base, handle)
+}
+
+async fn spawn_server_with_ev() -> (String, tokio::task::JoinHandle<()>) {
+    let http = reqwest::Client::new();
+    let mut cfg = base_config();
+    cfg.enable_audio_video_summary = true;
+    let app_state = state::AppState::new(cfg, http);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{}", addr);
+
+    app_state.set_siglip(Box::new(models::StubSiglip::new(1152)));
+    app_state.set_gemma(Box::new(models::StubGemma));
+    app_state.set_gemma_ev(Box::new(models::StubGemmaEv));
 
     let app = routes::router(Arc::clone(&app_state));
     let handle = tokio::spawn(async move {
@@ -122,4 +149,75 @@ async fn summarize_mentions_image_count() {
     let body: serde_json::Value = resp.json().await.unwrap();
     let s = body["summary"].as_str().unwrap();
     assert!(s.contains("images=2"), "summary missing image count: {s}");
+}
+
+#[tokio::test]
+async fn summarize_audio_returns_stub_summary() {
+    let (base, _h) = spawn_server_with_ev().await;
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/summarize/audio"))
+        .json(&serde_json::json!({
+            "status_text": "my podcast episode",
+            "media_url": "https://storage/audio.mp3",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let s = body["summary"].as_str().unwrap();
+    assert!(s.contains("audio"), "summary missing 'audio' marker: {s}");
+    assert!(
+        s.contains("my podcast episode"),
+        "summary missing caption: {s}"
+    );
+}
+
+#[tokio::test]
+async fn summarize_video_returns_stub_summary() {
+    let (base, _h) = spawn_server_with_ev().await;
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/summarize/video"))
+        .json(&serde_json::json!({
+            "status_text": "my beach clip",
+            "media_url": "https://storage/video.mp4",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let s = body["summary"].as_str().unwrap();
+    assert!(s.contains("video"), "summary missing 'video' marker: {s}");
+    assert!(
+        s.contains("my beach clip"),
+        "summary missing caption: {s}"
+    );
+}
+
+#[tokio::test]
+async fn summarize_audio_503_when_ev_not_loaded() {
+    let (base, _h) = spawn_server().await;
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/summarize/audio"))
+        .json(&serde_json::json!({
+            "status_text": "x",
+            "media_url": "https://storage/audio.mp3",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+}
+
+#[tokio::test]
+async fn summarize_audio_rejects_empty_media_url() {
+    let (base, _h) = spawn_server_with_ev().await;
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/summarize/audio"))
+        .json(&serde_json::json!({"status_text": "x", "media_url": ""}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
 }

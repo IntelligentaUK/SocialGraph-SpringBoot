@@ -36,6 +36,14 @@ pub trait GemmaModel: Send + Sync {
         -> anyhow::Result<String>;
 }
 
+/// Gemma edge-variant surface for audio + video summarization.
+pub trait GemmaEvModel: Send + Sync {
+    fn summarize_audio(&self, status_text: &str, media_url: &str)
+        -> anyhow::Result<String>;
+    fn summarize_video(&self, status_text: &str, media_url: &str)
+        -> anyhow::Result<String>;
+}
+
 // ---------------------------------------------------------------------------
 // Stub implementations (default build)
 // ---------------------------------------------------------------------------
@@ -101,6 +109,28 @@ impl GemmaModel for StubGemma {
             "[stub summary] caption=\"{}\"; images={}",
             status_text.replace('\n', " "),
             image_urls.len()
+        ))
+    }
+}
+
+pub struct StubGemmaEv;
+
+impl GemmaEvModel for StubGemmaEv {
+    fn summarize_audio(&self, status_text: &str, media_url: &str)
+        -> anyhow::Result<String> {
+        Ok(format!(
+            "[stub audio summary] caption=\"{}\"; url={}",
+            status_text.replace('\n', " "),
+            media_url
+        ))
+    }
+
+    fn summarize_video(&self, status_text: &str, media_url: &str)
+        -> anyhow::Result<String> {
+        Ok(format!(
+            "[stub video summary] caption=\"{}\"; url={}",
+            status_text.replace('\n', " "),
+            media_url
         ))
     }
 }

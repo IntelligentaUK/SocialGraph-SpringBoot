@@ -1,10 +1,13 @@
 package com.intelligenta.socialgraph.config;
 
+import com.anthropic.models.messages.ThinkingConfigEnabled;
+import com.anthropic.models.messages.ThinkingConfigParam;
 import com.intelligenta.socialgraph.ai.VisualSummarizer;
 import com.intelligenta.socialgraph.ai.chat.NoopSummarizer;
 import com.intelligenta.socialgraph.ai.chat.SidecarSummarizer;
 import com.intelligenta.socialgraph.ai.chat.SpringAiChatSummarizer;
 import com.intelligenta.socialgraph.service.EmbeddingClient;
+import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
@@ -69,8 +72,25 @@ public class VisualSummarizerConfig {
     static class Anthropic {
         @Bean
         @ConditionalOnMissingBean(VisualSummarizer.class)
-        public VisualSummarizer visualSummarizer(ChatModel model) {
-            return new SpringAiChatSummarizer(ChatClient.builder(model).build(), "anthropic");
+        public VisualSummarizer visualSummarizer(ChatModel model, AiProperties props) {
+            ChatClient.Builder builder = ChatClient.builder(model);
+            Long budget = anthropicThinkingBudget(props.getChat().getReasoningEffort());
+            if (budget != null) {
+                ThinkingConfigParam thinking = ThinkingConfigParam.ofEnabled(
+                    ThinkingConfigEnabled.builder().budgetTokens(budget).build());
+                builder.defaultOptions(AnthropicChatOptions.builder().thinking(thinking).build());
+            }
+            return new SpringAiChatSummarizer(builder.build(), "anthropic");
+        }
+
+        private static Long anthropicThinkingBudget(String effort) {
+            if (effort == null || effort.isBlank()) return null;
+            return switch (effort.toLowerCase()) {
+                case "low"    -> 1024L;
+                case "medium" -> 6144L;
+                case "high"   -> 16384L;
+                default       -> null;
+            };
         }
     }
 
