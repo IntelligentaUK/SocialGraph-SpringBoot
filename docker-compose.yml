@@ -1,6 +1,6 @@
 services:
   redis:
-    image: redis/redis-stack-server:7.4.0-v0
+    image: redis:8.4.2-alpine3.22
     container_name: socialgraph-redis
     ports:
       - "6379:6379"
@@ -32,5 +32,51 @@ services:
     profiles:
       - sidecar
 
+  # Infinispan RESP-compat profile (phase I-B): single-node Infinispan 15.2
+  # exposing RESP on 11222. Drop-in alternative to Redis when
+  # `PERSISTENCE_PROVIDER=infinispan INFINISPAN_CLIENT_MODE=resp`. Vector
+  # search and the embedding queue are disabled (RediSearch / Streams don't
+  # exist on RESP); phases I-I / I-J restore them on Infinispan-native
+  # primitives.
+  infinispan-resp:
+    image: infinispan/server:15.2
+    container_name: socialgraph-infinispan-resp
+    ports:
+      - "11222:11222"
+    environment:
+      - USER=admin
+      - PASS=admin
+    volumes:
+      - ./docker/infinispan/infinispan-resp.xml:/opt/infinispan/server/conf/infinispan-resp.xml:ro
+      - infinispan-resp-data:/opt/infinispan/server/data
+    command: ["-c", "infinispan-resp.xml"]
+    profiles:
+      - infinispan-resp
+
+  # Infinispan native-mode profile (phase I-C): single-node Infinispan 15.2
+  # exposing HotRod + RESP + REST on 11222. Same server config as the
+  # RESP profile, but the app is expected to run with
+  # `PERSISTENCE_PROVIDER=infinispan INFINISPAN_CLIENT_MODE=native`, which
+  # activates the HotRod-based RemoteCacheManager and the embedded
+  # EmbeddedCacheManager for ephemeral-tier caches. Clustering to 3 nodes
+  # and JGroups replication between the embedded and cluster tiers lands in
+  # phase I-K alongside the full test matrix.
+  infinispan:
+    image: infinispan/server:15.2
+    container_name: socialgraph-infinispan
+    ports:
+      - "11222:11222"
+    environment:
+      - USER=admin
+      - PASS=admin
+    volumes:
+      - ./docker/infinispan/infinispan-resp.xml:/opt/infinispan/server/conf/infinispan.xml:ro
+      - infinispan-data:/opt/infinispan/server/data
+    command: ["-c", "infinispan.xml"]
+    profiles:
+      - infinispan
+
 volumes:
   redis-data:
+  infinispan-resp-data:
+  infinispan-data:

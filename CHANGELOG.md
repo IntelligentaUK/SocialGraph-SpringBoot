@@ -7,6 +7,50 @@ release. Unreleased work sits at the top.
 
 ### Added
 
+- **Infinispan persistence foundation (phase I-A)** — dormant-by-default
+  Infinispan support alongside Redis. `persistence.provider` selects the
+  backend (`redis` default, `infinispan` alternative); when Infinispan is
+  chosen, `persistence.infinispan.client-mode` picks between `resp` (existing
+  Lettuce client against Infinispan's RESP endpoint, no service refactor) and
+  `native` (HotRod + embedded cache manager for transactional caches,
+  `CounterManager`, clustered listeners, and Ickle queries). This phase adds
+  the Infinispan BOM, optional dependencies (`infinispan-core`,
+  `infinispan-client-hotrod`, `infinispan-query`, `infinispan-commons`),
+  `PersistenceProperties`, and the full `persistence.*` YAML block. No
+  runtime behaviour changes — Redis remains the default and the build is
+  byte-identical when `PERSISTENCE_PROVIDER` is unset. `awaitility:4.2.2`
+  lands in test scope for the eventual-consistency assertions in later
+  phases.
+- **Infinispan RESP-compat mode (phase I-B)** — setting
+  `PERSISTENCE_PROVIDER=infinispan INFINISPAN_CLIENT_MODE=resp` redirects the
+  existing Lettuce client to Infinispan Server's RESP endpoint with no
+  service refactor. A new `PersistenceEnvironmentPostProcessor` rewrites
+  `spring.data.redis.host/port/username/password` from
+  `persistence.infinispan.resp-*` before bean creation, so every service that
+  injects `StringRedisTemplate` works unchanged. The RediSearch path
+  (`redisSearchClient`, `redisSearchBinaryConnection`,
+  `RedisSearchIndexInitializer`, `VectorSearchService`, `SearchController`)
+  and the Streams path (`EmbeddingWorker`, `ShareService`'s XADD to
+  `embedding:queue`) are gated on `persistence.provider=redis`; in Infinispan
+  RESP mode those beans are absent and `/api/search/*` return 404 until I-I.
+  Ships a `docker-compose` profile `infinispan-resp`, the server config at
+  `docker/infinispan/infinispan-resp.xml` (RESP endpoint with
+  `application/octet-stream` encoding), `InfinispanRespIntegrationTest` base
+  class, and `SessionServiceInfinispanRespTest` proving a stock Redis-backed
+  service round-trips through the Infinispan RESP endpoint unchanged.
+- **Infinispan native-mode infrastructure (phase I-C)** — setting
+  `INFINISPAN_CLIENT_MODE=native` activates `InfinispanConfig.Native`, which
+  wires three beans: a HotRod `RemoteCacheManager` connected to
+  `persistence.infinispan.hotrod-servers` (SASL auth via
+  `hotrod-username/password` + `DIGEST-MD5` by default), a `CounterManager`
+  derived from it, and an in-process `EmbeddedCacheManager` with pre-defined
+  `tokens` / `sessions` / `activations` ephemeral caches (LOCAL mode, ttl =
+  `persistence.infinispan.ephemeral-ttl`). JGroups replication between the
+  embedded tier and the cluster tier is deferred to phase I-E when the
+  first ephemeral-tier store consumes these beans. Ships the `infinispan`
+  docker-compose profile, `InfinispanHotRodIntegrationTest` base class, and
+  `InfinispanNativeSmokeTest` proving the beans wire and a HotRod put/get
+  round-trips. No service depends on these beans yet.
 - **Audio and video post summarization** — `type=audio` and `type=video` posts
   now produce retrieval-oriented summaries alongside the existing image path.
   The Rust sidecar gains a second Gemma slot (`gemma_ev`, default

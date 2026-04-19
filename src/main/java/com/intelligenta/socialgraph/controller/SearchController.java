@@ -7,6 +7,7 @@ import com.intelligenta.socialgraph.model.search.SearchResult;
 import com.intelligenta.socialgraph.security.AuthenticatedUser;
 import com.intelligenta.socialgraph.service.VectorSearchService;
 import jakarta.validation.Valid;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,9 +29,14 @@ import java.util.List;
  *
  * Both accept a {@link SearchRequest} with {@code query} and an optional
  * {@code limit} (default 20, max 100).
+ *
+ * <p>Only registered when {@code persistence.provider=redis}; Infinispan mode
+ * restores these endpoints via an Infinispan Query-backed service in phase
+ * I-I.
  */
 @RestController
 @RequestMapping("/api/search")
+@ConditionalOnProperty(prefix = "persistence", name = "provider", havingValue = "redis", matchIfMissing = true)
 public class SearchController {
 
     private final VectorSearchService search;

@@ -2,6 +2,7 @@ package com.intelligenta.socialgraph.service;
 
 import com.intelligenta.socialgraph.ai.ContentModerator;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
+import com.intelligenta.socialgraph.config.PersistenceProperties;
 import com.intelligenta.socialgraph.exception.ContentBlockedException;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.StoredObject;
@@ -37,17 +38,24 @@ public class ShareService {
     private final UserService userService;
     private final EmbeddingProperties embeddingProperties;
     private final ContentModerator moderator;
+    private final boolean embeddingQueueEnabled;
 
     public ShareService(StringRedisTemplate redisTemplate,
                         ObjectStorageService objectStorageService,
                         UserService userService,
                         EmbeddingProperties embeddingProperties,
-                        ContentModerator moderator) {
+                        ContentModerator moderator,
+                        PersistenceProperties persistenceProperties) {
         this.redisTemplate = redisTemplate;
         this.objectStorageService = objectStorageService;
         this.userService = userService;
         this.embeddingProperties = embeddingProperties;
         this.moderator = moderator;
+        // Redis Streams are Redis-specific; Infinispan RESP doesn't implement
+        // them. Phase I-J wires an Infinispan-native replacement, after which
+        // this flag is replaced by an EmbeddingQueue abstraction.
+        this.embeddingQueueEnabled =
+            persistenceProperties.getProvider() == PersistenceProperties.Provider.REDIS;
     }
 
     /**
@@ -290,7 +298,7 @@ public class ShareService {
 
         pushGraph(authenticatedUser, postId, keywords, imageHash);
 
-        if (shouldEmitEmbedding(type, content, imageCount)) {
+        if (embeddingQueueEnabled && shouldEmitEmbedding(type, content, imageCount)) {
             redisTemplate.opsForStream().add(MapRecord.create(
                 EMBEDDING_QUEUE,
                 Map.of("postId", postId, "authorUid", authenticatedUser)));

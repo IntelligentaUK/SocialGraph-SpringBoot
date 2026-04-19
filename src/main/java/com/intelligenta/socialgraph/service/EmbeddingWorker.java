@@ -10,6 +10,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
@@ -34,8 +35,14 @@ import java.util.concurrent.TimeUnit;
  * {@code embedding:post:<id>} with an 8-day TTL. Failed messages are retried
  * up to {@code embedding.dlq-max-retries} times before being redirected to
  * {@code embedding:queue:dlq}.
+ *
+ * <p>Redis Streams are specific to Redis; Infinispan's RESP endpoint does
+ * not implement them. The worker is therefore gated on
+ * {@code persistence.provider=redis}; phase I-J wires an Infinispan-native
+ * replacement backed by a clustered cache + {@code CounterManager}.
  */
 @Component
+@ConditionalOnProperty(prefix = "persistence", name = "provider", havingValue = "redis", matchIfMissing = true)
 public class EmbeddingWorker {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingWorker.class);

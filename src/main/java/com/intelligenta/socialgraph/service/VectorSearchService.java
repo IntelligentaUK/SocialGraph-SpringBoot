@@ -12,6 +12,7 @@ import io.lettuce.core.search.arguments.SearchArgs;
 import io.lettuce.core.search.arguments.SortByArgs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -27,8 +28,12 @@ import java.util.Map;
  * numeric prefilter on {@code created} (7-day window) combined with a KNN
  * query on either {@code combined_vec} (question search; multimodal) or
  * {@code text_vec} (AI text search; caption-only).
+ *
+ * <p>Only wired when {@code persistence.provider=redis}; Infinispan mode
+ * re-enables vector search via Ickle queries in phase I-I.
  */
 @Service
+@ConditionalOnProperty(prefix = "persistence", name = "provider", havingValue = "redis", matchIfMissing = true)
 public class VectorSearchService {
 
     private static final Logger log = LoggerFactory.getLogger(VectorSearchService.class);

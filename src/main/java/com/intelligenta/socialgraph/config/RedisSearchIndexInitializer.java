@@ -3,6 +3,7 @@ package com.intelligenta.socialgraph.config;
 import com.intelligenta.socialgraph.ai.EmbeddingProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -29,8 +30,12 @@ import java.nio.charset.StandardCharsets;
  *   combined_vec VECTOR HNSW 6 TYPE FLOAT32 DIM 1152 DISTANCE_METRIC COSINE
  *   text_vec     VECTOR HNSW 6 TYPE FLOAT32 DIM 1152 DISTANCE_METRIC COSINE
  * </pre>
+ *
+ * <p>Only created when {@code persistence.provider=redis}; Infinispan mode
+ * wires an equivalent index in phase I-I via Infinispan Query.
  */
 @Component
+@ConditionalOnProperty(prefix = "persistence", name = "provider", havingValue = "redis", matchIfMissing = true)
 public class RedisSearchIndexInitializer implements ApplicationListener<ApplicationReadyEvent> {
 
     private static final Logger log = LoggerFactory.getLogger(RedisSearchIndexInitializer.class);

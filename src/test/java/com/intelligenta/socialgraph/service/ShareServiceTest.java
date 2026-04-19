@@ -3,6 +3,7 @@ package com.intelligenta.socialgraph.service;
 import com.intelligenta.socialgraph.ai.ContentModerator;
 import com.intelligenta.socialgraph.ai.moderation.NoopModerator;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
+import com.intelligenta.socialgraph.config.PersistenceProperties;
 import com.intelligenta.socialgraph.exception.ContentBlockedException;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.StoredObject;
@@ -87,7 +88,8 @@ class ShareServiceTest {
             .thenReturn(RecordId.of("1-0"));
         embeddingProperties = new EmbeddingProperties();
         moderator = new NoopModerator();
-        shareService = new ShareService(redisTemplate, objectStorageService, userService, embeddingProperties, moderator);
+        shareService = new ShareService(redisTemplate, objectStorageService, userService,
+            embeddingProperties, moderator, new PersistenceProperties());
     }
 
     @Test
@@ -240,7 +242,7 @@ class ShareServiceTest {
             @Override public String providerKey() { return "test"; }
         };
         ShareService svc = new ShareService(redisTemplate, objectStorageService, userService,
-            embeddingProperties, flaggingModerator);
+            embeddingProperties, flaggingModerator, new PersistenceProperties());
 
         assertThrows(ContentBlockedException.class, () -> svc.shareText("u1", "hate speech here"));
     }
