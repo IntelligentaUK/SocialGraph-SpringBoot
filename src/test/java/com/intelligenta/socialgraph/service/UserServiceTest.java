@@ -1,29 +1,30 @@
 package com.intelligenta.socialgraph.service;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
 import com.intelligenta.socialgraph.config.AppProperties;
 import com.intelligenta.socialgraph.exception.CannotFollowSelfException;
 import com.intelligenta.socialgraph.exception.InvalidCredentialsException;
 import com.intelligenta.socialgraph.exception.UserNotFoundException;
 import com.intelligenta.socialgraph.model.MemberInfo;
+import com.intelligenta.socialgraph.persistence.ContentFilterStore;
+import com.intelligenta.socialgraph.persistence.RelationStore;
+import com.intelligenta.socialgraph.persistence.RelationStore.Relation;
+import com.intelligenta.socialgraph.persistence.TokenStore;
+import com.intelligenta.socialgraph.persistence.UserStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.HashOperations;
-import org.springframework.data.redis.core.SetOperations;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,90 +32,73 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
-    @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private HashOperations<String, Object, Object> hashOperations;
-
-    @Mock
-    private SetOperations<String, String> setOperations;
-
-    @Mock
-    private ValueOperations<String, String> valueOperations;
+    @Mock private UserStore users;
+    @Mock private RelationStore relations;
+    @Mock private ContentFilterStore filters;
+    @Mock private TokenStore tokens;
 
     private UserService userService;
 
     @BeforeEach
     void setUp() {
-        lenient().when(redisTemplate.opsForHash()).thenReturn(hashOperations);
-        lenient().when(redisTemplate.opsForSet()).thenReturn(setOperations);
-        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        userService = new UserService(redisTemplate, new AppProperties());
+        userService = new UserService(users, relations, filters, tokens, new AppProperties());
     }
 
     @Test
     void followUpdatesCountersOnUsernameHashes() {
-        when(hashOperations.hasKey("user:uid", "target-uid")).thenReturn(true);
-        when(hashOperations.get("user:uid", "target-uid")).thenReturn("target-user");
-        when(hashOperations.get("user:uid", "auth-uid")).thenReturn("auth-user");
-        when(setOperations.add("user:target-uid:followers", "auth-uid")).thenReturn(1L);
+        when(users.uidExists("target-uid")).thenReturn(true);
+        when(users.findUsernameByUid("target-uid")).thenReturn(Optional.of("target-user"));
+        when(users.findUsernameByUid("auth-uid")).thenReturn(Optional.of("auth-user"));
+        when(relations.add("target-uid", Relation.FOLLOWERS, "auth-uid")).thenReturn(true);
 
         userService.follow("auth-uid", "target-uid", null);
 
-        verify(setOperations).add("user:auth-uid:following", "target-uid");
-        verify(hashOperations).increment("user:target-user", "followers", 1L);
-        verify(hashOperations).increment("user:auth-user", "following", 1L);
+        verify(relations).add("auth-uid", Relation.FOLLOWING, "target-uid");
+        verify(users).incrementField("target-user", "followers", 1L);
+        verify(users).incrementField("auth-user", "following", 1L);
     }
 
     @Test
     void followRejectsSelfFollow() {
-        when(hashOperations.hasKey("user:uid", "same")).thenReturn(true);
+        when(users.uidExists("same")).thenReturn(true);
         assertThrows(CannotFollowSelfException.class, () -> userService.follow("same", "same", null));
     }
 
     @Test
     void activateAccountReturnsFalseForUnknownToken() {
-        when(valueOperations.get("user:activations:missing:uid")).thenReturn(null);
-
-        Map<String, String> result = userService.activateAccount("missing");
-
-        assertEquals("false", result.get("activated"));
+        when(users.consumeActivationToken("missing")).thenReturn(Optional.empty());
+        assertEquals("false", userService.activateAccount("missing").get("activated"));
     }
 
     @Test
     void blockRemovesExistingFollowRelationships() {
-        when(hashOperations.hasKey("user:uid", "target-uid")).thenReturn(true);
-        when(hashOperations.get("user:uid", "target-uid")).thenReturn("target-user");
-        when(hashOperations.get("user:uid", "auth-uid")).thenReturn("auth-user");
-        when(setOperations.add("user:auth-uid:blocked", "target-uid")).thenReturn(1L);
-        doReturn(1L).when(setOperations).remove("user:target-uid:followers", "auth-uid");
-        doReturn(1L).when(setOperations).remove("user:auth-uid:following", "target-uid");
-        doReturn(0L).when(setOperations).remove("user:auth-uid:followers", "target-uid");
+        when(users.uidExists("target-uid")).thenReturn(true);
+        lenient().when(users.findUsernameByUid("target-uid")).thenReturn(Optional.of("target-user"));
+        lenient().when(users.findUsernameByUid("auth-uid")).thenReturn(Optional.of("auth-user"));
+        when(relations.add("auth-uid", Relation.BLOCKED, "target-uid")).thenReturn(true);
+        lenient().when(relations.remove("target-uid", Relation.FOLLOWERS, "auth-uid")).thenReturn(true);
+        lenient().when(relations.remove("auth-uid", Relation.FOLLOWERS, "target-uid")).thenReturn(false);
 
-        boolean changed = userService.block("auth-uid", "target-uid");
-
-        assertTrue(changed);
-        verify(setOperations).remove("user:auth-uid:following", "target-uid");
-        verify(hashOperations).increment("user:target-user", "followers", -1L);
-        verify(hashOperations).increment("user:auth-user", "following", -1L);
+        assertTrue(userService.block("auth-uid", "target-uid"));
+        verify(relations).remove("auth-uid", Relation.FOLLOWING, "target-uid");
+        verify(users).incrementField("target-user", "followers", -1L);
+        verify(users).incrementField("auth-user", "following", -1L);
     }
 
     @Test
     void getProfileIncludesRelationshipFlagsAndCounters() {
-        when(hashOperations.get("user:uid", "target-uid")).thenReturn("target-user");
-        when(hashOperations.get("user:target-user", "fullname")).thenReturn("Target User");
-        when(hashOperations.get("user:target-user", "bio")).thenReturn("Bio");
-        when(hashOperations.get("user:target-user", "profilePicture")).thenReturn("pic");
-        when(hashOperations.get("user:target-user", "created")).thenReturn("123");
-        when(hashOperations.get("user:target-user", "followers")).thenReturn("10");
-        when(hashOperations.get("user:target-user", "following")).thenReturn("5");
-        when(setOperations.isMember("user:viewer-uid:blocked", "target-uid")).thenReturn(true);
-        when(setOperations.isMember("user:viewer-uid:muted", "target-uid")).thenReturn(false);
-        when(setOperations.isMember("user:target-uid:blocked", "viewer-uid")).thenReturn(true);
+        when(users.findUsernameByUid("target-uid")).thenReturn(Optional.of("target-user"));
+        when(users.getField("target-user", "fullname")).thenReturn(Optional.of("Target User"));
+        when(users.getField("target-user", "bio")).thenReturn(Optional.of("Bio"));
+        when(users.getField("target-user", "profilePicture")).thenReturn(Optional.of("pic"));
+        when(users.getField("target-user", "created")).thenReturn(Optional.of("123"));
+        when(users.getField("target-user", "followers")).thenReturn(Optional.of("10"));
+        when(users.getField("target-user", "following")).thenReturn(Optional.of("5"));
+        when(relations.contains("viewer-uid", Relation.BLOCKED, "target-uid")).thenReturn(true);
+        when(relations.contains("viewer-uid", Relation.MUTED, "target-uid")).thenReturn(false);
+        when(relations.contains("target-uid", Relation.BLOCKED, "viewer-uid")).thenReturn(true);
 
         Map<String, Object> profile = userService.getProfile("target-uid", "viewer-uid");
-
         assertEquals("target-user", profile.get("username"));
         assertEquals("10", profile.get("followers"));
         assertEquals(true, profile.get("isBlocked"));
@@ -123,14 +107,13 @@ class UserServiceTest {
 
     @Test
     void searchUsersFiltersAndPaginatesByUsernameAndFullname() {
-        when(hashOperations.entries("user:uid")).thenReturn(Map.of("u1", "alice", "u2", "bob"));
-        doReturn("alice").when(hashOperations).get("user:uid", "u1");
-        doReturn("bob").when(hashOperations).get("user:uid", "u2");
-        when(hashOperations.get("user:alice", "fullname")).thenReturn("Alice Smith");
-        when(hashOperations.get("user:bob", "fullname")).thenReturn("Robert Jones");
+        when(users.allUidToUsername()).thenReturn(Map.of("u1", "alice", "u2", "bob"));
+        lenient().when(users.findUsernameByUid("u1")).thenReturn(Optional.of("alice"));
+        lenient().when(users.findUsernameByUid("u2")).thenReturn(Optional.of("bob"));
+        when(users.getField("alice", "fullname")).thenReturn(Optional.of("Alice Smith"));
+        lenient().when(users.getField("bob", "fullname")).thenReturn(Optional.of("Robert Jones"));
 
         List<MemberInfo> results = userService.searchUsers("ali", 0, 10);
-
         assertEquals(1, results.size());
         assertEquals("alice", results.getFirst().getUsername());
         assertEquals("Alice Smith", results.getFirst().getFullname());
@@ -138,30 +121,27 @@ class UserServiceTest {
 
     @Test
     void searchUsersReturnsEmptyPageWhenIndexIsOutOfBounds() {
-        when(hashOperations.entries("user:uid")).thenReturn(Map.of("u1", "alice"));
-
+        when(users.allUidToUsername()).thenReturn(Map.of("u1", "alice"));
         assertTrue(userService.searchUsers("alice", 5, 2).isEmpty());
     }
 
     @Test
     void loginRejectsUnknownCredentials() {
-        when(hashOperations.multiGet("user:ghost", List.of("passwordHash", "salt", "poly"))).thenReturn(List.of());
-
+        when(users.getFields("ghost", List.of("passwordHash", "salt", "poly")))
+            .thenReturn(List.of(Optional.empty(), Optional.empty(), Optional.empty()));
         assertThrows(InvalidCredentialsException.class, () -> userService.login("ghost", "password"));
     }
 
     @Test
     void canViewContentReturnsFalseWhenEitherSideHasBlocked() {
-        when(setOperations.isMember("user:viewer:blocked", "actor")).thenReturn(false);
-        when(setOperations.isMember("user:actor:blocked", "viewer")).thenReturn(true);
-
+        when(relations.contains("viewer", Relation.BLOCKED, "actor")).thenReturn(false);
+        when(relations.contains("actor", Relation.BLOCKED, "viewer")).thenReturn(true);
         assertFalse(userService.canViewContent("viewer", "actor"));
     }
 
     @Test
     void updateProfileRejectsUnknownUsers() {
-        when(hashOperations.get("user:uid", "missing")).thenReturn(null);
-
+        when(users.findUsernameByUid("missing")).thenReturn(Optional.empty());
         assertThrows(UserNotFoundException.class, () -> userService.updateProfile("missing", "Name", null, null));
     }
 }

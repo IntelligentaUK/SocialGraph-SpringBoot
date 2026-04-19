@@ -1,5 +1,9 @@
 package com.intelligenta.socialgraph.security;
 
+import java.util.Optional;
+
+import com.intelligenta.socialgraph.persistence.TokenStore;
+import com.intelligenta.socialgraph.persistence.UserStore;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -7,9 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.HashOperations;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -23,30 +24,20 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class TokenAuthenticationFilterTest {
 
-    @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private ValueOperations<String, String> valueOperations;
-
-    @Mock
-    private HashOperations<String, Object, Object> hashOperations;
-
-    @Mock
-    private FilterChain filterChain;
+    @Mock private TokenStore tokens;
+    @Mock private UserStore users;
+    @Mock private FilterChain filterChain;
 
     private TokenAuthenticationFilter filter;
 
     @BeforeEach
     void setUp() {
-        filter = new TokenAuthenticationFilter(redisTemplate);
+        filter = new TokenAuthenticationFilter(tokens, users);
         SecurityContextHolder.clearContext();
     }
 
     @AfterEach
-    void tearDown() {
-        SecurityContextHolder.clearContext();
-    }
+    void tearDown() { SecurityContextHolder.clearContext(); }
 
     @Test
     void bearerTokenCreatesAuthenticatedUserAndIncrementsPolyCount() throws Exception {
@@ -54,17 +45,15 @@ class TokenAuthenticationFilterTest {
         request.addHeader("Authorization", "Bearer good-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(redisTemplate.opsForHash()).thenReturn(hashOperations);
-        when(valueOperations.get("tokens:good-token")).thenReturn("uid-1");
-        when(hashOperations.get("user:uid", "uid-1")).thenReturn("alice");
+        when(tokens.resolve("good-token")).thenReturn(Optional.of("uid-1"));
+        when(users.findUsernameByUid("uid-1")).thenReturn(Optional.of("alice"));
 
         filter.doFilterInternal(request, response, filterChain);
 
         AuthenticatedUser user = (AuthenticatedUser) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         assertEquals("uid-1", user.getUid());
         assertEquals("alice", user.getUsername());
-        verify(hashOperations).increment("user:alice", "polyCount", 1L);
+        verify(users).incrementField("alice", "polyCount", 1L);
         verify(filterChain).doFilter(request, response);
     }
 
@@ -76,7 +65,10 @@ class TokenAuthenticationFilterTest {
         filter.doFilterInternal(request, response, filterChain);
 
         assertNull(SecurityContextHolder.getContext().getAuthentication());
-        verify(hashOperations, never()).increment(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong());
+        verify(users, never()).incrementField(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
         verify(filterChain).doFilter(request, response);
     }
 }

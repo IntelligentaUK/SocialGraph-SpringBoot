@@ -1,15 +1,14 @@
 package com.intelligenta.socialgraph.service;
 
+import java.util.Map;
+import java.util.Optional;
+
+import com.intelligenta.socialgraph.persistence.SessionStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.HashOperations;
-import org.springframework.data.redis.core.StringRedisTemplate;
-
-import java.time.Duration;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -22,36 +21,31 @@ import static org.mockito.Mockito.when;
 class SessionServiceTest {
 
     @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private HashOperations<String, Object, Object> hashOperations;
+    private SessionStore sessions;
 
     private SessionService sessionService;
 
     @BeforeEach
     void setUp() {
-        when(redisTemplate.opsForHash()).thenReturn(hashOperations);
-        sessionService = new SessionService(redisTemplate);
+        sessionService = new SessionService(sessions);
     }
 
     @Test
     void getSessionGeneratesPublicKeyForNewSessionsOnly() {
-        when(redisTemplate.hasKey("session:known-session")).thenReturn(false, true);
+        when(sessions.exists("known-session")).thenReturn(false, true);
 
-        Map<String, Object> firstResponse = sessionService.getSession("known-session");
-        Map<String, Object> secondResponse = sessionService.getSession("known-session");
+        Map<String, Object> first = sessionService.getSession("known-session");
+        Map<String, Object> second = sessionService.getSession("known-session");
 
-        assertEquals("known-session", firstResponse.get("uuid"));
-        assertTrue(((Map<?, ?>) firstResponse.get("response")).containsKey("pubKey"));
-        assertTrue(((Map<?, ?>) secondResponse.get("response")).isEmpty());
-        verify(hashOperations).putAll(eq("session:known-session"), any(Map.class));
-        verify(redisTemplate).expire("session:known-session", Duration.ofDays(1));
+        assertEquals("known-session", first.get("uuid"));
+        assertTrue(((Map<?, ?>) first.get("response")).containsKey("pubKey"));
+        assertTrue(((Map<?, ?>) second.get("response")).isEmpty());
+        verify(sessions).put(eq("known-session"), any());
     }
 
     @Test
     void getSessionGeneratesUuidWhenRequestIsBlank() {
-        when(redisTemplate.hasKey(org.mockito.ArgumentMatchers.startsWith("session:"))).thenReturn(false);
+        when(sessions.exists(org.mockito.ArgumentMatchers.anyString())).thenReturn(false);
 
         Map<String, Object> response = sessionService.getSession(" ");
 

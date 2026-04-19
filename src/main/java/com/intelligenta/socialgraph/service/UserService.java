@@ -10,44 +10,58 @@ import com.intelligenta.socialgraph.exception.NotFollowingException;
 import com.intelligenta.socialgraph.exception.UserNotFoundException;
 import com.intelligenta.socialgraph.model.AuthResponse;
 import com.intelligenta.socialgraph.model.MemberInfo;
+import com.intelligenta.socialgraph.persistence.ContentFilterStore;
+import com.intelligenta.socialgraph.persistence.RelationStore;
+import com.intelligenta.socialgraph.persistence.RelationStore.Relation;
+import com.intelligenta.socialgraph.persistence.TokenStore;
+import com.intelligenta.socialgraph.persistence.UserStore;
 import com.intelligenta.socialgraph.util.Util;
 import org.springframework.security.access.AccessDeniedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Service for user-related operations.
+ * User-related operations. Refactored in phase I-D to delegate all persistence
+ * through the store interfaces so the Infinispan-native impls landing in
+ * phases I-F onward can swap in behind the same surface.
  */
 @Service
 public class UserService {
 
     private static final Logger log = LoggerFactory.getLogger(UserService.class);
 
-    private final StringRedisTemplate redisTemplate;
+    private final UserStore users;
+    private final RelationStore relations;
+    private final ContentFilterStore filters;
+    private final TokenStore tokens;
     private final AppProperties appProperties;
 
-    public UserService(StringRedisTemplate redisTemplate, AppProperties appProperties) {
-        this.redisTemplate = redisTemplate;
+    public UserService(UserStore users,
+                       RelationStore relations,
+                       ContentFilterStore filters,
+                       TokenStore tokens,
+                       AppProperties appProperties) {
+        this.users = users;
+        this.relations = relations;
+        this.filters = filters;
+        this.tokens = tokens;
         this.appProperties = appProperties;
     }
 
-    /**
-     * Register a new user.
-     */
     public AuthResponse register(String username, String password, String email) throws NoSuchAlgorithmException {
-        // Check if user already exists
-        if (Boolean.TRUE.equals(redisTemplate.hasKey("user:" + username))) {
+        if (users.exists(username)) {
             throw new AlreadyRegisteredException("Username already registered");
         }
 
@@ -69,17 +83,8 @@ public class UserService {
         userHash.put("following", "0");
 
         long tokenExpiration = appProperties.getSecurity().getTokenExpirationSeconds();
-        String activationToken = Util.UUID();
-
-        // Execute Redis transaction
-        redisTemplate.multi();
-        redisTemplate.opsForHash().putAll("user:" + username, userHash);
-        redisTemplate.opsForHash().put("user:uid", uid, username);
-        redisTemplate.opsForValue().set("user:activations:" + activationToken + ":uid", uid);
-        redisTemplate.opsForValue().set("tokens:" + token, uid);
-        redisTemplate.expire("tokens:" + token, java.time.Duration.ofSeconds(tokenExpiration));
-        redisTemplate.opsForHash().increment("user:" + username, "polyCount", 1);
-        redisTemplate.exec();
+        Duration ttl = Duration.ofSeconds(tokenExpiration);
+        String activationToken = users.register(username, userHash, uid, token, ttl);
 
         AuthResponse response = new AuthResponse(username, token, uid, tokenExpiration);
         response.setActivationToken(activationToken);
@@ -88,36 +93,31 @@ public class UserService {
         return response;
     }
 
-    /**
-     * Login a user.
-     */
     public AuthResponse login(String username, String password) {
-        List<Object> fields = redisTemplate.opsForHash().multiGet("user:" + username, 
+        List<Optional<String>> fields = users.getFields(username,
             List.of("passwordHash", "salt", "poly"));
 
-        if (fields.isEmpty() || fields.get(0) == null) {
+        if (fields.isEmpty() || fields.get(0).isEmpty()) {
             throw new InvalidCredentialsException("Invalid username or password");
         }
 
-        String passwordHash = (String) fields.get(0);
-        String salt = (String) fields.get(1);
+        String passwordHash = fields.get(0).get();
+        String salt = fields.get(1).orElse("");
 
         if (!PasswordHash.validateArgon2Hash(salt + password, passwordHash)) {
             throw new InvalidCredentialsException("Invalid username or password");
         }
 
         String token = Util.UUID();
-        List<Object> userFields = redisTemplate.opsForHash().multiGet("user:" + username,
+        List<Optional<String>> userFields = users.getFields(username,
             List.of("uuid", "followers", "following"));
 
-        String uid = (String) userFields.get(0);
-        String followers = (String) userFields.get(1);
-        String following = (String) userFields.get(2);
+        String uid = userFields.get(0).orElse(null);
+        String followers = userFields.get(1).orElse("0");
+        String following = userFields.get(2).orElse("0");
 
         long tokenExpiration = appProperties.getSecurity().getTokenExpirationSeconds();
-
-        redisTemplate.opsForValue().set("tokens:" + token, uid);
-        redisTemplate.expire("tokens:" + token, java.time.Duration.ofSeconds(tokenExpiration));
+        tokens.issue(token, uid, Duration.ofSeconds(tokenExpiration));
 
         AuthResponse response = new AuthResponse(username, token, uid, tokenExpiration);
         response.setFollowers(followers);
@@ -125,133 +125,80 @@ public class UserService {
         return response;
     }
 
-    /**
-     * Get authenticated user UID from token.
-     */
     public String authenticatedUser(String token) {
-        return redisTemplate.opsForValue().get("tokens:" + token);
+        return tokens.resolve(token).orElse(null);
     }
 
-    /**
-     * Get username by UID.
-     */
     public String getUsername(String uid) {
-        return (String) redisTemplate.opsForHash().get("user:uid", uid);
+        return users.findUsernameByUid(uid).orElse(null);
     }
 
-    /**
-     * Get UID by username.
-     */
     public String getUid(String username) {
-        return (String) redisTemplate.opsForHash().get("user:" + username, "uuid");
+        return users.findUidByUsername(username).orElse(null);
     }
 
-    /**
-     * Check if user exists.
-     */
-    public boolean userExists(String username) {
-        return Boolean.TRUE.equals(redisTemplate.hasKey("user:" + username));
-    }
+    public boolean userExists(String username) { return users.exists(username); }
+    public boolean uidExists(String uid)        { return users.uidExists(uid); }
 
-    /**
-     * Check if UID exists.
-     */
-    public boolean uidExists(String uid) {
-        return Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey("user:uid", uid));
-    }
-
-    /**
-     * Follow a user.
-     */
     public void follow(String authenticatedUid, String targetUid, String targetUsername) {
-        // Validate target user exists
         targetUid = resolveTargetUid(targetUid, targetUsername);
-        
-        if (targetUid == null || !uidExists(targetUid)) {
+        if (targetUid == null || !users.uidExists(targetUid)) {
             throw new UserNotFoundException("User not found");
         }
-
         if (authenticatedUid.equals(targetUid)) {
             throw new CannotFollowSelfException("Cannot follow yourself");
         }
 
-        Long added = redisTemplate.opsForSet().add("user:" + targetUid + ":followers", authenticatedUid);
-        if (added == null || added == 0) {
+        boolean added = relations.add(targetUid, Relation.FOLLOWERS, authenticatedUid);
+        if (!added) {
             throw new AlreadyFollowingException("Already following this user");
         }
-
-        // Update following set and counters
-        redisTemplate.opsForSet().add("user:" + authenticatedUid + ":following", targetUid);
+        relations.add(authenticatedUid, Relation.FOLLOWING, targetUid);
         incrementCounterForUid(targetUid, "followers", 1);
         incrementCounterForUid(authenticatedUid, "following", 1);
     }
 
-    /**
-     * Unfollow a user.
-     */
     public void unfollow(String authenticatedUid, String targetUid) {
         if (authenticatedUid.equals(targetUid)) {
             throw new CannotFollowSelfException("Cannot unfollow yourself");
         }
-
-        Long removed = redisTemplate.opsForSet().remove("user:" + targetUid + ":followers", authenticatedUid);
-        if (removed == null || removed == 0) {
+        boolean removed = relations.remove(targetUid, Relation.FOLLOWERS, authenticatedUid);
+        if (!removed) {
             throw new NotFollowingException("Not following this user");
         }
-
-        // Update following set and counters
-        redisTemplate.opsForSet().remove("user:" + authenticatedUid + ":following", targetUid);
+        relations.remove(authenticatedUid, Relation.FOLLOWING, targetUid);
         incrementCounterForUid(targetUid, "followers", -1);
         incrementCounterForUid(authenticatedUid, "following", -1);
     }
 
-    /**
-     * Get members of a set (followers, following, friends, blocked, etc.)
-     */
     public List<MemberInfo> getMembers(String uid, String setType) {
         long startTime = System.currentTimeMillis();
         Set<String> memberUids = "friends".equals(setType)
             ? getFriends(uid)
-            : redisTemplate.opsForSet().members("user:" + uid + ":" + setType);
+            : relations.members(uid, parseRelation(setType));
 
         List<MemberInfo> members = new ArrayList<>();
-        if (memberUids != null) {
-            for (String memberUid : memberUids) {
-                String username = getUsername(memberUid);
-                String fullname = (String) redisTemplate.opsForHash().get("user:" + username, "fullname");
-                members.add(new MemberInfo(memberUid, username, fullname));
-            }
+        for (String memberUid : memberUids) {
+            String username = getUsername(memberUid);
+            String fullname = username == null ? null : users.getField(username, "fullname").orElse(null);
+            members.add(new MemberInfo(memberUid, username, fullname));
         }
-
-        long duration = System.currentTimeMillis() - startTime;
-        log.debug("getMembers({}, {}) took {}ms", uid, setType, duration);
-
+        log.debug("getMembers({}, {}) took {}ms", uid, setType, System.currentTimeMillis() - startTime);
         return members;
     }
 
-    /**
-     * Get user's public RSA key.
-     */
     public String getPublicRSAKey(String uid) {
-        return (String) redisTemplate.opsForHash().get("user:" + uid + ":crypto", "publicKey");
+        return users.getPublicRsaKey(uid).orElse(null);
     }
 
-    /**
-     * Get a user field value.
-     */
     public String getUserField(String uid, String field) {
         String username = getUsername(uid);
-        if (username != null) {
-            return (String) redisTemplate.opsForHash().get("user:" + username, field);
-        }
-        return null;
+        if (username == null) return null;
+        return users.getField(username, field).orElse(null);
     }
 
-    /**
-     * Activate user account.
-     */
     public Map<String, String> activateAccount(String activationToken) {
-        String uid = redisTemplate.opsForValue().get("user:activations:" + activationToken + ":uid");
+        String uid = users.consumeActivationToken(activationToken).orElse(null);
         String username = uid != null ? getUsername(uid) : null;
 
         Map<String, String> result = new HashMap<>();
@@ -259,7 +206,7 @@ public class UserService {
             result.put("username", username);
             result.put("uid", uid);
             result.put("activated", "true");
-            redisTemplate.opsForHash().put("user:" + username, "activated", "true");
+            users.putField(username, "activated", "true");
         } else {
             result.put("activated", "false");
         }
@@ -291,27 +238,20 @@ public class UserService {
         String username = requireUsername(uid);
         Map<String, String> updates = new HashMap<>();
 
-        if (fullname != null) {
-            updates.put("fullname", fullname);
-        }
-        if (bio != null) {
-            updates.put("bio", bio);
-        }
-        if (profilePicture != null) {
-            updates.put("profilePicture", profilePicture);
-        }
+        if (fullname != null)       updates.put("fullname", fullname);
+        if (bio != null)            updates.put("bio", bio);
+        if (profilePicture != null) updates.put("profilePicture", profilePicture);
 
         if (!updates.isEmpty()) {
-            redisTemplate.opsForHash().putAll("user:" + username, updates);
+            users.putAll(username, updates);
         }
-
         return getProfile(uid, uid);
     }
 
     public List<MemberInfo> searchUsers(String query, int index, int count) {
         String normalizedQuery = query == null ? "" : query.trim().toLowerCase();
-        List<MemberInfo> matches = redisTemplate.opsForHash().entries("user:uid").entrySet().stream()
-            .map(entry -> new MemberInfo((String) entry.getKey(), (String) entry.getValue(), null))
+        List<MemberInfo> matches = users.allUidToUsername().entrySet().stream()
+            .map(entry -> new MemberInfo(entry.getKey(), entry.getValue(), null))
             .filter(member -> normalizedQuery.isEmpty()
                 || member.getUsername().toLowerCase().contains(normalizedQuery)
                 || String.valueOf(getUserField(member.getUid(), "fullname")).toLowerCase().contains(normalizedQuery))
@@ -320,13 +260,12 @@ public class UserService {
 
         int fromIndex = Math.max(0, index);
         int toIndex = Math.min(matches.size(), fromIndex + Math.max(count, 0));
-        if (fromIndex >= matches.size()) {
-            return new ArrayList<>();
-        }
+        if (fromIndex >= matches.size()) return new ArrayList<>();
 
         List<MemberInfo> page = new ArrayList<>();
         for (MemberInfo member : matches.subList(fromIndex, toIndex)) {
-            page.add(new MemberInfo(member.getUid(), member.getUsername(), getUserField(member.getUid(), "fullname")));
+            page.add(new MemberInfo(member.getUid(), member.getUsername(),
+                getUserField(member.getUid(), "fullname")));
         }
         return page;
     }
@@ -334,68 +273,51 @@ public class UserService {
     public boolean block(String authenticatedUid, String targetUid) {
         targetUid = resolveTargetUid(targetUid, null);
         validateDistinctKnownUsers(authenticatedUid, targetUid);
-
-        Long added = redisTemplate.opsForSet().add("user:" + authenticatedUid + ":blocked", targetUid);
-        redisTemplate.opsForSet().add("user:" + targetUid + ":blockers", authenticatedUid);
+        boolean added = relations.add(authenticatedUid, Relation.BLOCKED, targetUid);
+        relations.add(targetUid, Relation.BLOCKERS, authenticatedUid);
         removeFollowIfPresent(authenticatedUid, targetUid);
         removeFollowIfPresent(targetUid, authenticatedUid);
-        return added != null && added == 1;
+        return added;
     }
 
     public boolean unblock(String authenticatedUid, String targetUid) {
         targetUid = resolveTargetUid(targetUid, null);
         validateDistinctKnownUsers(authenticatedUid, targetUid);
-
-        Long removed = redisTemplate.opsForSet().remove("user:" + authenticatedUid + ":blocked", targetUid);
-        redisTemplate.opsForSet().remove("user:" + targetUid + ":blockers", authenticatedUid);
-        return removed != null && removed == 1;
+        boolean removed = relations.remove(authenticatedUid, Relation.BLOCKED, targetUid);
+        relations.remove(targetUid, Relation.BLOCKERS, authenticatedUid);
+        return removed;
     }
 
     public boolean mute(String authenticatedUid, String targetUid) {
         targetUid = resolveTargetUid(targetUid, null);
         validateDistinctKnownUsers(authenticatedUid, targetUid);
-
-        Long added = redisTemplate.opsForSet().add("user:" + authenticatedUid + ":muted", targetUid);
-        redisTemplate.opsForSet().add("user:" + targetUid + ":muters", authenticatedUid);
-        return added != null && added == 1;
+        boolean added = relations.add(authenticatedUid, Relation.MUTED, targetUid);
+        relations.add(targetUid, Relation.MUTERS, authenticatedUid);
+        return added;
     }
 
     public boolean unmute(String authenticatedUid, String targetUid) {
         targetUid = resolveTargetUid(targetUid, null);
         validateDistinctKnownUsers(authenticatedUid, targetUid);
-
-        Long removed = redisTemplate.opsForSet().remove("user:" + authenticatedUid + ":muted", targetUid);
-        redisTemplate.opsForSet().remove("user:" + targetUid + ":muters", authenticatedUid);
-        return removed != null && removed == 1;
+        boolean removed = relations.remove(authenticatedUid, Relation.MUTED, targetUid);
+        relations.remove(targetUid, Relation.MUTERS, authenticatedUid);
+        return removed;
     }
 
     public boolean hasBlocked(String ownerUid, String targetUid) {
-        Boolean isBlocked = redisTemplate.opsForSet().isMember("user:" + ownerUid + ":blocked", targetUid);
-        return Boolean.TRUE.equals(isBlocked);
+        return relations.contains(ownerUid, Relation.BLOCKED, targetUid);
     }
 
     public boolean hasMuted(String ownerUid, String targetUid) {
-        Boolean isMuted = redisTemplate.opsForSet().isMember("user:" + ownerUid + ":muted", targetUid);
-        return Boolean.TRUE.equals(isMuted);
+        return relations.contains(ownerUid, Relation.MUTED, targetUid);
     }
 
     public boolean isImageBlocked(String ownerUid, String imageHash) {
-        if (imageHash == null || imageHash.isBlank()) {
-            return false;
-        }
-
-        return Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(
-            "user:" + ownerUid + ":images:blocked:md5", imageHash));
+        return filters.isImageBlocked(ownerUid, imageHash);
     }
 
     public boolean hasNegativeKeyword(String ownerUid, List<String> keywords) {
-        for (String keyword : keywords) {
-            if (Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(
-                    "user:" + ownerUid + ":negative:keywords", keyword))) {
-                return true;
-            }
-        }
-        return false;
+        return filters.hasAnyNegativeKeyword(ownerUid, keywords);
     }
 
     public boolean canViewContent(String viewerUid, String actorUid) {
@@ -408,59 +330,58 @@ public class UserService {
         }
     }
 
+    // Accessor used by ShareService to fan-out to followers.
+    public Set<String> followerUids(String uid) {
+        return relations.members(uid, Relation.FOLLOWERS);
+    }
+
+    private Relation parseRelation(String setType) {
+        return switch (setType) {
+            case "followers" -> Relation.FOLLOWERS;
+            case "following" -> Relation.FOLLOWING;
+            case "blocked"   -> Relation.BLOCKED;
+            case "blockers"  -> Relation.BLOCKERS;
+            case "muted"     -> Relation.MUTED;
+            case "muters"    -> Relation.MUTERS;
+            default          -> throw new IllegalArgumentException("Unknown relation: " + setType);
+        };
+    }
+
     private String resolveTargetUid(String targetUid, String targetUsername) {
-        if (targetUid != null && !targetUid.isBlank()) {
-            return targetUid;
-        }
-        if (targetUsername != null && !targetUsername.isBlank()) {
-            return getUid(targetUsername);
-        }
+        if (targetUid != null && !targetUid.isBlank()) return targetUid;
+        if (targetUsername != null && !targetUsername.isBlank()) return getUid(targetUsername);
         return null;
     }
 
     private String requireUsername(String uid) {
         String username = getUsername(uid);
-        if (username == null) {
-            throw new UserNotFoundException("User not found");
-        }
+        if (username == null) throw new UserNotFoundException("User not found");
         return username;
     }
 
     private void incrementCounterForUid(String uid, String field, long delta) {
         String username = getUsername(uid);
-        if (username != null) {
-            redisTemplate.opsForHash().increment("user:" + username, field, delta);
-        }
+        if (username != null) users.incrementField(username, field, delta);
     }
 
     private long getCounter(String uid, String field) {
         String username = getUsername(uid);
-        if (username == null) {
-            return 0L;
-        }
-
-        Object value = redisTemplate.opsForHash().get("user:" + username, field);
-        if (value == null) {
-            return 0L;
-        }
-        return Long.parseLong(String.valueOf(value));
+        if (username == null) return 0L;
+        return users.getField(username, field)
+            .map(v -> { try { return Long.parseLong(v); } catch (NumberFormatException e) { return 0L; } })
+            .orElse(0L);
     }
 
     private Set<String> getFriends(String uid) {
-        Set<String> followers = redisTemplate.opsForSet().members("user:" + uid + ":followers");
-        Set<String> following = redisTemplate.opsForSet().members("user:" + uid + ":following");
-
-        if (followers == null || following == null) {
-            return new HashSet<>();
-        }
-
+        Set<String> followers = relations.members(uid, Relation.FOLLOWERS);
+        Set<String> following = relations.members(uid, Relation.FOLLOWING);
         Set<String> friends = new HashSet<>(followers);
         friends.retainAll(following);
         return friends;
     }
 
     private void validateDistinctKnownUsers(String authenticatedUid, String targetUid) {
-        if (targetUid == null || !uidExists(targetUid)) {
+        if (targetUid == null || !users.uidExists(targetUid)) {
             throw new UserNotFoundException("User not found");
         }
         if (authenticatedUid.equals(targetUid)) {
@@ -469,9 +390,9 @@ public class UserService {
     }
 
     private void removeFollowIfPresent(String followerUid, String targetUid) {
-        Long removed = redisTemplate.opsForSet().remove("user:" + targetUid + ":followers", followerUid);
-        if (removed != null && removed > 0) {
-            redisTemplate.opsForSet().remove("user:" + followerUid + ":following", targetUid);
+        boolean removed = relations.remove(targetUid, Relation.FOLLOWERS, followerUid);
+        if (removed) {
+            relations.remove(followerUid, Relation.FOLLOWING, targetUid);
             incrementCounterForUid(targetUid, "followers", -1);
             incrementCounterForUid(followerUid, "following", -1);
         }

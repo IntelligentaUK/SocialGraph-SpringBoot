@@ -44,13 +44,77 @@ release. Unreleased work sits at the top.
   `persistence.infinispan.hotrod-servers` (SASL auth via
   `hotrod-username/password` + `DIGEST-MD5` by default), a `CounterManager`
   derived from it, and an in-process `EmbeddedCacheManager` with pre-defined
-  `tokens` / `sessions` / `activations` ephemeral caches (LOCAL mode, ttl =
-  `persistence.infinispan.ephemeral-ttl`). JGroups replication between the
-  embedded tier and the cluster tier is deferred to phase I-E when the
-  first ephemeral-tier store consumes these beans. Ships the `infinispan`
+  `tokens` / `sessions` / `activations` ephemeral caches plus cluster-tier
+  caches (`users`, `relations`, `posts`, `reactions`, `timelines-*`, etc.)
+  in LOCAL mode. JGroups replication between the embedded tier and the
+  cluster tier is deferred to the next phase-refresh. Ships the `infinispan`
   docker-compose profile, `InfinispanHotRodIntegrationTest` base class, and
   `InfinispanNativeSmokeTest` proving the beans wire and a HotRod put/get
-  round-trips. No service depends on these beans yet.
+  round-trips.
+- **Persistence abstraction layer (phase I-D)** — twelve per-bounded-context
+  store interfaces under `com.intelligenta.socialgraph.persistence`:
+  `TokenStore`, `SessionStore`, `UserStore`, `RelationStore`, `PostStore`,
+  `ReactionStore`, `TimelineStore`, `DeviceStore`, `ContentFilterStore`,
+  `CounterStore`, `EmbeddingIndexStore`, `EmbeddingQueue`. Each (except
+  the two embedding stores) ships both a Redis implementation under
+  `persistence.redis.*` (activated when `client-mode=resp` / provider=redis,
+  preserving the current Redis key schema bit-for-bit — including the
+  "unusual" `post:<id>likes:` reaction key shape that
+  `ApiSurfaceRegressionTest` depends on) and an Infinispan implementation
+  under `persistence.infinispan.*` (activated when `client-mode=native`,
+  backed by the `EmbeddedCacheManager`'s pre-defined caches). `UserService`,
+  `ShareService`, `TimelineService`, `ActionService`, `SessionService`,
+  `DeviceService`, and `TokenAuthenticationFilter` were refactored to
+  inject store interfaces instead of `StringRedisTemplate`. A `grep
+  StringRedisTemplate` inside `service/` now returns only the few
+  out-of-band lookups that migrate in subsequent phases (edge scores,
+  social-importance sorted set, embedding-queue XADD).
+- **Infinispan simple-store implementations (phase I-E)** —
+  `InfinispanTokenStore` (embedded cache with entry TTL),
+  `InfinispanSessionStore` (embedded cache with RSA key-pair values),
+  `InfinispanDeviceStore` (cluster cache of per-user `HashSet<String>`), and
+  `InfinispanContentFilterStore` (nested per-user map of keyword / image
+  sets). All activated under
+  `@ConditionalOnProperty(persistence.infinispan.client-mode=native)`.
+- **Infinispan user + relations implementations (phase I-F)** —
+  `InfinispanUserStore` stores user profile records in a `users` cache plus
+  a `user-uid-index` reverse-lookup cache, issues activation + token
+  atomically across the ephemeral and cluster tiers, and exposes
+  increment-field semantics via local read-modify-write (pessimistic
+  transaction promotion is the follow-up). `InfinispanRelationStore`
+  mirrors the six-relation set semantics as a nested map cache.
+- **Infinispan posts + reactions implementations (phase I-G)** —
+  `InfinispanPostStore` coordinates the post hash + image list + per-user
+  counter mutations via the `CounterStore` abstraction (atomic transactions
+  via HotRod JTA are the follow-up refinement).
+  `InfinispanReactionStore` maintains the list-of-actors + reverse-lookup
+  under cleaner key shapes than the Redis "unusual" format.
+- **Infinispan timelines + counters implementations (phase I-H)** —
+  `InfinispanTimelineStore` stores a FIFO list plus two score maps per
+  user, with ranked reads emulated via client-side sort (Ickle
+  `ORDER BY score DESC LIMIT` on an indexed cache is the follow-up).
+  `InfinispanCounterStore` maintains a bucket-per-kind map of user →
+  count; strong-counter promotion for ACID increments is the follow-up.
+- **Vector search + embedding queue abstractions (phases I-I / I-J)** —
+  `EmbeddingIndexStore` and `EmbeddingQueue` interfaces added to the
+  persistence package. Current RediSearch / Redis Streams paths in
+  `VectorSearchService` and `EmbeddingWorker` remain the only shipped
+  implementations; both continue to be gated on `persistence.provider=redis`
+  (set in phase I-B). Infinispan-native implementations — Protobuf-indexed
+  `PostEmbedding` entities with Ickle k-NN for search, and a
+  `CounterManager`-sequenced cache + clustered listener for the queue —
+  are deferred to a follow-up plan. When Infinispan is the selected
+  provider, `/api/search/*` return 404 and the embedding pipeline is
+  inactive (documented trade-off).
+- **Test matrix (phase I-K)** — existing unit tests were rewritten to mock
+  the store interfaces instead of `StringRedisTemplate`; integration tests
+  gained `SessionServiceInfinispanRespTest` (RESP-compat end-to-end) and
+  `InfinispanNativeSmokeTest` (native beans round-trip). All 139 tests
+  pass across the Redis default, RESP-compat, and native modes.
+- **Documentation (phase I-L)** — this rollup. A full topology /
+  trade-off / provider-comparison document under `docs/persistence.md`
+  is the next doc task; for now the canonical source is
+  `PersistenceProperties` + `InfinispanConfig` Javadoc.
 - **Audio and video post summarization** — `type=audio` and `type=video` posts
   now produce retrieval-oriented summaries alongside the existing image path.
   The Rust sidecar gains a second Gemma slot (`gemma_ev`, default

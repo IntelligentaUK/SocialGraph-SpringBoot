@@ -111,9 +111,32 @@ public class InfinispanConfig {
                     .expiration().lifespan(ispn.getEphemeralTtl().toMillis())
                     .build();
 
+            org.infinispan.configuration.cache.Configuration persistent =
+                new org.infinispan.configuration.cache.ConfigurationBuilder()
+                    .clustering().cacheMode(CacheMode.LOCAL)
+                    .build();
+
+            // Ephemeral tier
             manager.defineConfiguration("tokens", ephemeral);
             manager.defineConfiguration("sessions", ephemeral);
             manager.defineConfiguration("activations", ephemeral);
+
+            // Cluster tier (LOCAL in phase I-D foundation; REPL/DIST when the
+            // JGroups transport is wired in the next phase-refresh).
+            manager.defineConfiguration("users", persistent);
+            manager.defineConfiguration("user-uid-index", persistent);
+            manager.defineConfiguration("relations", persistent);
+            manager.defineConfiguration("content-filters", persistent);
+            manager.defineConfiguration("posts", persistent);
+            manager.defineConfiguration("post-replies", persistent);
+            manager.defineConfiguration("post-images", persistent);
+            manager.defineConfiguration("reactions", persistent);
+            manager.defineConfiguration("reaction-lookups", persistent);
+            manager.defineConfiguration("timelines-fifo", persistent);
+            manager.defineConfiguration("timelines-personal", persistent);
+            manager.defineConfiguration("timelines-everyone", persistent);
+            manager.defineConfiguration("devices", persistent);
+            manager.defineConfiguration("counters", persistent);
 
             log.info("Infinispan embedded cache manager started (LOCAL, ephemeral-ttl={})",
                 ispn.getEphemeralTtl());
