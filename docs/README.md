@@ -14,8 +14,11 @@ the page covers so you can jump straight to the part you need.
 ## How the system works
 
 - [**Architecture**](architecture.md) — layered view of the application (controllers
-  → services → Redis + object storage), with Mermaid diagrams for the runtime shape
-  and the request lifecycle.
+  → services → persistence + object storage), with Mermaid diagrams for the runtime
+  shape and the request lifecycle.
+- [**Persistence**](persistence.md) — choosing between Redis (default) and
+  Infinispan (RESP-compat or native HotRod), topology diagrams, env vars, and
+  operational trade-offs.
 - [**Authentication**](authentication.md) — stateless Bearer-token flow, public vs.
   authenticated endpoints, `TokenAuthenticationFilter` behavior, how
   `@AuthenticationPrincipal` resolves to `AuthenticatedUser`.
@@ -43,8 +46,15 @@ controller:
 
 Documentation for maintainers and contributors:
 
+- [**Persistence abstraction**](internals/persistence-abstraction.md) — the 12
+  store interfaces, the Redis / Infinispan dual implementations, and how
+  `@ConditionalOnProperty` wiring picks one per run.
 - [**Redis schema**](internals/redis-schema.md) — every key and hash field the
-  application touches, who reads and who writes it.
+  Redis adapter (including RESP-compat mode) touches, who reads and who
+  writes it.
+- [**Infinispan schema**](internals/infinispan-schema.md) — cache-by-cache
+  layout under `persistence.provider=infinispan` / `client-mode=native`,
+  plus the feature-gap matrix vs. the Redis adapter.
 - [**Timeline delivery**](internals/timeline-delivery.md) — the `pushGraph` fan-out
   algorithm, the filters it applies, and the three timeline representations
   (FIFO list, personal zset, everyone zset), with a Mermaid sequence diagram.

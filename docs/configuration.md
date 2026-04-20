@@ -17,13 +17,49 @@ name used at runtime (not the YAML path) unless otherwise noted.
 | `SERVER_PORT` | `4567`  | Spring Boot standard env var. The YAML sets `server.port: 4567` to preserve the legacy Spark port. |
 
 
+## Persistence provider
+
+SocialGraph supports two backends. `PERSISTENCE_PROVIDER` picks between them;
+see [persistence.md](persistence.md) for the full topology / trade-off guide
+and [infinispan-schema.md](internals/infinispan-schema.md) for the
+Infinispan-native cache layout.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PERSISTENCE_PROVIDER` | `redis` | `redis` (default, Redis Stack) or `infinispan` |
+| `INFINISPAN_CLIENT_MODE` | `resp` | `resp` (Lettuce → Infinispan RESP endpoint, no service refactor) or `native` (HotRod + embedded cache manager) |
+| `INFINISPAN_CLUSTER_NAME` | `socialgraph` | JGroups cluster name (reserved for the cluster-join follow-up) |
+| `INFINISPAN_HOTROD_SERVERS` | `localhost:11222` | Comma-separated `host:port` list; used by `RemoteCacheManager` in native mode |
+| `INFINISPAN_HOTROD_USERNAME` | *(empty)* | HotRod SASL username (native mode) |
+| `INFINISPAN_HOTROD_PASSWORD` | *(empty)* | HotRod SASL password (native mode) |
+| `INFINISPAN_HOTROD_SASL_MECHANISM` | `DIGEST-MD5` | HotRod SASL mechanism (`DIGEST-MD5`, `PLAIN`, `SCRAM-SHA-512`, …) |
+| `INFINISPAN_HOTROD_SASL_REALM` | `default` | HotRod server realm |
+| `INFINISPAN_RESP_HOST` | `localhost` | RESP endpoint host (RESP mode) |
+| `INFINISPAN_RESP_PORT` | `11222` | RESP endpoint port |
+| `INFINISPAN_RESP_USERNAME` | *(empty)* | Forwarded to `spring.data.redis.username` in RESP mode |
+| `INFINISPAN_RESP_PASSWORD` | *(empty)* | Forwarded to `spring.data.redis.password` in RESP mode |
+| `INFINISPAN_EMBEDDED_CONFIG` | `infinispan-embedded.xml` | Reserved for XML-driven configuration; programmatic setup is used today |
+| `INFINISPAN_EPHEMERAL_TTL` | `PT24H` | ISO-8601 `Duration`; TTL of `tokens` / `sessions` / `activations` caches |
+| `INFINISPAN_TRANSACTIONAL_DEFAULT` | `false` | Reserved — switches native impls to transactional caches when the JTA upgrade lands |
+| `INFINISPAN_JGROUPS_STACK` | `jgroups-tcp.xml` | Reserved — JGroups stack file |
+| `INFINISPAN_JGROUPS_INITIAL_HOSTS` | *(empty)* | Reserved — TCPPING initial-hosts list |
+
+`PERSISTENCE_PROVIDER=redis` with `INFINISPAN_CLIENT_MODE=resp` (the default)
+is equivalent to omitting the Infinispan block entirely.
+
 ## Redis
 
 Redis holds all social state (users, posts, tokens, timelines, reactions, blocks,
-mutes, counters, etc.). **Redis Stack 7.2+** is required — the `search` module
-is used by the vector-search endpoints. The project's `docker-compose.yml`
-brings up `redis/redis-stack-server:7.4.0-v0`; the plain `redis` image does not
-work.
+mutes, counters, etc.) under `persistence.provider=redis`. **Redis Stack 7.2+**
+is required — the `search` module is used by the vector-search endpoints. The
+project's `docker-compose.yml` brings up `redis/redis-stack-server:7.4.0-v0`;
+the plain `redis` image does not work.
+
+When `persistence.provider=infinispan` and `client-mode=resp`, the same
+`spring.data.redis.*` properties still drive Lettuce, but an
+`EnvironmentPostProcessor` (`PersistenceEnvironmentPostProcessor`) rewrites
+the host / port / username / password from the `INFINISPAN_RESP_*` values at
+boot time so the app talks to the Infinispan RESP endpoint instead.
 
 
 | Variable         | Default     | Purpose                          |

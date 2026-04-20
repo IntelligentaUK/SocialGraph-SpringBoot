@@ -5,6 +5,14 @@ timelines, reactions, follow graph, block / mute sets, session keypairs,
 counters. This page enumerates every key the application touches and the service
 that owns it.
 
+> **Which mode does this apply to?** This page describes the Redis adapter's
+> keyspace — active under `persistence.provider=redis` (default) and also
+> when `persistence.provider=infinispan` / `client-mode=resp`, because the
+> Lettuce client writes the same keys against Infinispan's RESP endpoint.
+> For `client-mode=native`, see [infinispan-schema.md](infinispan-schema.md).
+> Provider selection and the overall persistence story live in
+> [`../persistence.md`](../persistence.md).
+
 There are no namespaces or prefixes beyond the per-type keys below. Everything
 lives on one logical Redis database.
 
@@ -248,6 +256,11 @@ query vector from SigLIP-2.
 
 ## Related
 
+- [Persistence](../persistence.md) — provider selection, topology, env vars.
+- [Persistence abstraction](persistence-abstraction.md) — the 12 store
+  interfaces each Redis key here lives behind.
+- [Infinispan schema](infinispan-schema.md) — the equivalent cache layout
+  under `client-mode=native`.
 - [Architecture](../architecture.md) — high-level component diagram.
 - [Timeline delivery](timeline-delivery.md) — `pushGraph` fan-out in detail.
 - [Security filter](security-filter.md) — token lookup path.

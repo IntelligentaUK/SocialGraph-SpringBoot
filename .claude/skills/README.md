@@ -12,7 +12,8 @@ making changes that match its triggers.
 | Skill | When to use |
 |-------|-------------|
 | [`api-endpoint-work/SKILL.md`](api-endpoint-work/SKILL.md) | Adding, removing, or modifying any `/api/...` route, controller, request / response DTO, or error code. |
-| [`redis-schema-work/SKILL.md`](redis-schema-work/SKILL.md) | Adding or changing any Redis key — new hash field, new list, new zset, new counter, new prefix. |
+| [`persistence-work/SKILL.md`](persistence-work/SKILL.md) | Adding or changing any persistence store interface, Redis / Infinispan implementation, cache definition, or provider-mode gate. |
+| [`redis-schema-work/SKILL.md`](redis-schema-work/SKILL.md) | Adding or changing any Redis key — new hash field, new list, new zset, new counter, new prefix. Use alongside `persistence-work` when the change has an Infinispan side. |
 | [`storage-provider-work/SKILL.md`](storage-provider-work/SKILL.md) | Adding a new object-storage backend, changing the `ObjectStorageService` contract, or adjusting upload / signed-URL behavior. |
 
 ## Canonical references for agents
@@ -21,8 +22,14 @@ making changes that match its triggers.
 - [`docs/architecture.md`](../../docs/architecture.md) — component view and
   request lifecycle
 - [`docs/api/README.md`](../../docs/api/README.md) — full HTTP surface
+- [`docs/persistence.md`](../../docs/persistence.md) — provider selection,
+  topology, and env vars (Redis vs. Infinispan RESP vs. Infinispan native)
+- [`docs/internals/persistence-abstraction.md`](../../docs/internals/persistence-abstraction.md)
+  — the 12 store interfaces and their dual implementations
 - [`docs/internals/redis-schema.md`](../../docs/internals/redis-schema.md) —
-  every Redis key the app touches
+  every Redis key the app touches (RESP-compat mode uses the same schema)
+- [`docs/internals/infinispan-schema.md`](../../docs/internals/infinispan-schema.md)
+  — the Infinispan cache layout under native mode
 - [`../../llms.txt`](../../llms.txt) — compact LLM index
 - [`../../llms-full.txt`](../../llms-full.txt) — single-file documentation bundle
 

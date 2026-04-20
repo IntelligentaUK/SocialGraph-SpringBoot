@@ -1,8 +1,10 @@
 # SocialGraph
 
-A social graph REST API written in Java 25 on Spring Boot 4, backed by Redis for all
-social state and pluggable object storage (Azure Blob, Google Cloud Storage, or
-Oracle Cloud Infrastructure) for media.
+A social graph REST API written in Java 25 on Spring Boot 4. The persistence
+layer is pluggable — **Redis Stack** (default) or **Infinispan** (RESP-compat
+or native HotRod, embedded ephemeral tier + cluster tier) — with pluggable
+object storage (Azure Blob, Google Cloud Storage, or Oracle Cloud
+Infrastructure) for media.
 
 > **Status: Alpha.** The API surface is stable enough to use for integration work, but
 > storage tuning and operational hardening are still in progress. The JVM test gate is
@@ -58,6 +60,26 @@ export AZURE_STORAGE_CONTAINER=photos
 ./mvnw spring-boot:run
 # Server listens on http://localhost:4567
 ```
+
+### Alternative: Infinispan
+
+```bash
+# RESP-compat mode (drop-in; existing Lettuce client talks to Infinispan RESP endpoint)
+docker compose --profile infinispan-resp up -d
+PERSISTENCE_PROVIDER=infinispan INFINISPAN_CLIENT_MODE=resp \
+  INFINISPAN_RESP_USERNAME=admin INFINISPAN_RESP_PASSWORD=admin \
+  ./mvnw spring-boot:run
+
+# Native mode (HotRod + embedded ephemeral tier)
+docker compose --profile infinispan up -d
+PERSISTENCE_PROVIDER=infinispan INFINISPAN_CLIENT_MODE=native \
+  INFINISPAN_HOTROD_USERNAME=admin INFINISPAN_HOTROD_PASSWORD=admin \
+  ./mvnw spring-boot:run
+```
+
+Vector search (`/api/search/*`) and the embedding pipeline are only active
+under the Redis provider today; see [docs/persistence.md](docs/persistence.md)
+for the provider matrix and trade-offs.
 
 Smoke test:
 

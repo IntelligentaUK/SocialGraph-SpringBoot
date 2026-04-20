@@ -1,13 +1,16 @@
 # SocialGraph
 
-> SocialGraph is a Spring Boot 4 / Java 25 social graph REST API. It uses Redis
-> as its sole persistence layer (users, posts, tokens, timelines, reactions,
-> follow / block / mute graph, counters) and a pluggable object store
-> (Azure Blob, Google Cloud Storage, or OCI Object Storage) for media.
+> SocialGraph is a Spring Boot 4 / Java 25 social graph REST API. Persistence
+> is pluggable: **Redis Stack** (default) or **Infinispan** (either RESP-compat
+> drop-in or native HotRod + embedded ephemeral tier). Services talk to
+> persistence through 12 store interfaces under `persistence/`; each has a
+> Redis and an Infinispan implementation selected at startup via
+> `@ConditionalOnProperty`. Media lives in a pluggable object store
+> (Azure Blob, Google Cloud Storage, or OCI Object Storage).
 >
-> All HTTP endpoints live under `/api`. Auth is stateless Bearer tokens stored
-> at Redis key `tokens:<token>`. The full documentation set lives under
-> `docs/`. The complete single-file bundle is `llms-full.txt`.
+> All HTTP endpoints live under `/api`. Auth is stateless Bearer tokens. The
+> full documentation set lives under `docs/`. The complete single-file bundle
+> is `llms-full.txt`.
 
 ## Start here
 
@@ -22,7 +25,8 @@
 
 ## How the system works
 
-- [docs/architecture.md](docs/architecture.md): layered view (controllers → services → Redis + object storage), Mermaid runtime diagram, request lifecycle, and the write / read paths for posts and timelines.
+- [docs/architecture.md](docs/architecture.md): layered view (controllers → services → persistence + object storage), Mermaid runtime diagram, request lifecycle, and the write / read paths for posts and timelines.
+- [docs/persistence.md](docs/persistence.md): choosing between Redis (default) and Infinispan (RESP-compat or native HotRod), topology diagrams, env vars, operational trade-offs.
 - [docs/authentication.md](docs/authentication.md): stateless Bearer-token model, public vs. authenticated endpoints, `TokenAuthenticationFilter` filter chain, password hashing, RSA session bootstrap.
 
 ## API reference
@@ -38,7 +42,9 @@
 
 ## Internals
 
-- [docs/internals/redis-schema.md](docs/internals/redis-schema.md): every Redis key the app touches, by section (users, follow graph, posts, reactions, timelines, sessions, counters, devices, content filters), with a read / write ownership table.
+- [docs/internals/persistence-abstraction.md](docs/internals/persistence-abstraction.md): the 12 store interfaces (`TokenStore`, `SessionStore`, `UserStore`, `RelationStore`, `PostStore`, `ReactionStore`, `TimelineStore`, `DeviceStore`, `ContentFilterStore`, `CounterStore`, `EmbeddingIndexStore`, `EmbeddingQueue`), their Redis / Infinispan implementations, and the `@ConditionalOnProperty` wiring.
+- [docs/internals/redis-schema.md](docs/internals/redis-schema.md): every Redis key the Redis adapter (and Infinispan RESP-compat mode) touches, by section (users, follow graph, posts, reactions, timelines, sessions, counters, devices, content filters), with a read / write ownership table.
+- [docs/internals/infinispan-schema.md](docs/internals/infinispan-schema.md): the Infinispan native-mode cache layout — ephemeral tier (`tokens`, `sessions`, `activations`) + cluster tier (`users`, `user-uid-index`, `relations`, `content-filters`, `posts`, `post-replies`, `post-images`, `reactions`, `reaction-lookups`, `timelines-fifo`, `timelines-personal`, `timelines-everyone`, `devices`, `counters`) plus the gap matrix against Redis.
 - [docs/internals/timeline-delivery.md](docs/internals/timeline-delivery.md): the `pushGraph` write-time fan-out, the four delivery filters, the three timeline representations, and the read-time filter reapplication.
 - [docs/internals/storage-providers.md](docs/internals/storage-providers.md): `ObjectStorageService` contract, `@ConditionalOnProperty`-based provider selection, and the Azure / GCP / OCI implementations side by side.
 - [docs/internals/image-pipeline.md](docs/internals/image-pipeline.md): `ImagePayloads` MIME detection (JPEG / PNG / WebP) plus `LiquidRescaler` seam carving and how `POST /api/lq/upload` wires them.
@@ -53,6 +59,7 @@
 - [docs/agent-skills.md](docs/agent-skills.md): index of the repo-local agent skills under `.claude/skills/` and when to invoke each one.
 - [.claude/skills/README.md](.claude/skills/README.md): the skills directory's own index.
 - [.claude/skills/api-endpoint-work/SKILL.md](.claude/skills/api-endpoint-work/SKILL.md): use when adding, removing, or modifying any `/api/...` route, controller, request / response DTO, or error code.
+- [.claude/skills/persistence-work/SKILL.md](.claude/skills/persistence-work/SKILL.md): use when adding or changing a persistence store interface, Redis / Infinispan implementation, cache definition, or provider-mode gate.
 - [.claude/skills/redis-schema-work/SKILL.md](.claude/skills/redis-schema-work/SKILL.md): use when adding or changing any Redis key — new hash field, new list, new zset, new counter, new prefix.
 - [.claude/skills/storage-provider-work/SKILL.md](.claude/skills/storage-provider-work/SKILL.md): use when adding a new object-storage backend, changing the `ObjectStorageService` contract, or adjusting upload / signed-URL behavior.
 
@@ -66,5 +73,7 @@
 2. **All errors** must come out as `{ "error": "<code>", "error_description": "<msg>" }`. Use a typed exception from `exception/` and let `GlobalExceptionHandler` map it.
 3. **Auth is `Authorization: Bearer <token>` only.** Do not add query-string token parameters.
 4. **Public endpoints** are hardcoded in `SecurityConfig.filterChain`: `/api/login`, `/api/register`, `/api/ping`, `/api/session`, `/api/activate`. The mirrored `app.public-endpoints` in `application.yml` is documentation only.
-5. **The reaction key suffix has no colon between postId and the verb plural** (`post:<id>likes:`, not `post:<id>:likes:`). This is intentional — see `Verbs.Action.key()`.
+5. **The reaction key suffix has no colon between postId and the verb plural** (`post:<id>likes:`, not `post:<id>:likes:`). This is intentional — see `Verbs.Action.key()`. The Redis adapter preserves this key shape; the Infinispan-native adapter uses a cleaner `<postId>:<verb>` cache key because no API regression depends on it.
 6. **Devices are keyed by username**, everything else by UID. Don't add to the username pattern.
+7. **Services depend on the 12 `persistence.*Store` interfaces, not on `StringRedisTemplate` or `EmbeddedCacheManager` directly.** When adding a persistence method, update both the Redis impl and the Infinispan impl, or the app will fail to start under the mode that's missing a bean. Use the `persistence-work` skill.
+8. **Vector search (`/api/search/*`) and the Redis Streams embedding pipeline are currently only active under `persistence.provider=redis`.** The `EmbeddingIndexStore` / `EmbeddingQueue` interfaces exist but the Infinispan-native implementations (Ickle k-NN + `CounterManager` + `@ClientListener`) are deferred. Do not assume these features are available when Infinispan is selected.
