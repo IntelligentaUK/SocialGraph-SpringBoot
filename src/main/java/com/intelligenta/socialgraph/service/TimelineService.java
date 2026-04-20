@@ -2,28 +2,29 @@ package com.intelligenta.socialgraph.service;
 
 import com.intelligenta.socialgraph.model.TimelineEntry;
 import com.intelligenta.socialgraph.model.TimelineResponse;
+import com.intelligenta.socialgraph.persistence.PostStore;
+import com.intelligenta.socialgraph.persistence.TimelineStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Service for timeline generation.
- */
+/** Timeline generation backed by {@link TimelineStore} + {@link PostStore}. */
 @Service
 public class TimelineService {
 
     private static final Logger log = LoggerFactory.getLogger(TimelineService.class);
 
-    private final StringRedisTemplate redisTemplate;
+    private final TimelineStore timelines;
+    private final PostStore posts;
     private final UserService userService;
 
-    public TimelineService(StringRedisTemplate redisTemplate, UserService userService) {
-        this.redisTemplate = redisTemplate;
+    public TimelineService(TimelineStore timelines, PostStore posts, UserService userService) {
+        this.timelines = timelines;
+        this.posts = posts;
         this.userService = userService;
     }
 
@@ -32,62 +33,37 @@ public class TimelineService {
         EVERYONE("everyone");
 
         private final String text;
+        Importance(String text) { this.text = text; }
+        @Override public String toString() { return text; }
 
-        Importance(String text) {
-            this.text = text;
-        }
-
-        @Override
-        public String toString() {
-            return text;
+        TimelineStore.Kind toKind() {
+            return this == PERSONAL ? TimelineStore.Kind.PERSONAL_IMPORTANCE : TimelineStore.Kind.EVERYONE_IMPORTANCE;
         }
     }
 
-    /**
-     * Get timeline using FIFO order.
-     */
     public TimelineResponse getFifoTimeline(String authenticatedUser, int index, int count) {
         long startTime = System.currentTimeMillis();
-        
-        List<String> postIds = redisTemplate.opsForList().range(
-            "user:" + authenticatedUser + ":timeline", index, index + count - 1);
+        List<String> postIds = timelines.range(authenticatedUser, TimelineStore.Kind.FIFO, index, count);
 
         List<TimelineEntry> entries = new ArrayList<>();
-        if (postIds != null) {
-            for (String postId : postIds) {
-                TimelineEntry entry = generatePost(authenticatedUser, postId);
-                if (entry != null) {
-                    entries.add(entry);
-                }
-            }
+        for (String postId : postIds) {
+            TimelineEntry entry = generatePost(authenticatedUser, postId);
+            if (entry != null) entries.add(entry);
         }
-
-        long duration = System.currentTimeMillis() - startTime;
-        return new TimelineResponse(entries, entries.size(), duration);
+        return new TimelineResponse(entries, entries.size(), System.currentTimeMillis() - startTime);
     }
 
-    /**
-     * Get timeline sorted by social importance.
-     */
-    public TimelineResponse getSocialImportanceTimeline(String authenticatedUser, int index, int count, 
+    public TimelineResponse getSocialImportanceTimeline(String authenticatedUser, int index, int count,
                                                          Importance importanceType) {
         long startTime = System.currentTimeMillis();
-
-        String key = "user:" + authenticatedUser + ":timeline:" + importanceType.toString() + ":importance";
-        var postIdsWithScores = redisTemplate.opsForZSet().reverseRange(key, index, index + count - 1);
+        List<String> postIds = timelines.range(authenticatedUser, importanceType.toKind(), index, count);
 
         List<TimelineEntry> entries = new ArrayList<>();
-        if (postIdsWithScores != null) {
-            for (String postId : postIdsWithScores) {
-                TimelineEntry entry = generatePost(authenticatedUser, postId);
-                if (entry != null) {
-                    entries.add(entry);
-                }
-            }
+        for (String postId : postIds) {
+            TimelineEntry entry = generatePost(authenticatedUser, postId);
+            if (entry != null) entries.add(entry);
         }
-
-        long duration = System.currentTimeMillis() - startTime;
-        return new TimelineResponse(entries, entries.size(), duration);
+        return new TimelineResponse(entries, entries.size(), System.currentTimeMillis() - startTime);
     }
 
     public TimelineEntry getPost(String authenticatedUser, String postId) {
@@ -100,45 +76,29 @@ public class TimelineService {
 
     public TimelineResponse getReplies(String authenticatedUser, String postId, int index, int count) {
         long startTime = System.currentTimeMillis();
-        List<String> replyIds = redisTemplate.opsForList().range(
-            "post:" + postId + ":replies", index, index + count - 1);
+        List<String> replyIds = posts.replies(postId, index, count);
 
         List<TimelineEntry> entries = new ArrayList<>();
-        if (replyIds != null) {
-            for (String replyId : replyIds) {
-                TimelineEntry entry = generatePost(authenticatedUser, replyId);
-                if (entry != null) {
-                    entries.add(entry);
-                }
-            }
+        for (String replyId : replyIds) {
+            TimelineEntry entry = generatePost(authenticatedUser, replyId);
+            if (entry != null) entries.add(entry);
         }
-
         return new TimelineResponse(entries, entries.size(), System.currentTimeMillis() - startTime);
     }
 
     private TimelineEntry generatePost(String authenticatedUser, String postId) {
-        Map<Object, Object> post = redisTemplate.opsForHash().entries("post:" + postId);
-        
-        if (post.isEmpty() || post.get("id") == null) {
-            return null;
-        }
+        Map<String, Object> post = posts.get(postId).orElse(null);
+        if (post == null || post.get("id") == null) return null;
 
         String postUid = (String) post.get("uid");
-        if (postUid != null && !userService.canViewContent(authenticatedUser, postUid)) {
-            return null;
-        }
+        if (postUid != null && !userService.canViewContent(authenticatedUser, postUid)) return null;
 
         String content = (String) post.get("content");
-        if (userService.hasNegativeKeyword(authenticatedUser, ShareService.getWords(content))) {
-            return null;
-        }
+        if (userService.hasNegativeKeyword(authenticatedUser, ShareService.getWords(content))) return null;
 
         String imageHash = post.containsKey("imageHash")
-            ? (String) post.get("imageHash")
-            : (String) post.get("md5");
-        if (userService.isImageBlocked(authenticatedUser, imageHash)) {
-            return null;
-        }
+            ? (String) post.get("imageHash") : (String) post.get("md5");
+        if (userService.isImageBlocked(authenticatedUser, imageHash)) return null;
 
         TimelineEntry entry = new TimelineEntry();
         entry.setUuid((String) post.get("id"));
@@ -152,16 +112,12 @@ public class TimelineService {
 
         String imageCountStr = (String) post.get("imageCount");
         if (imageCountStr != null) {
-            int count = Integer.parseInt(imageCountStr);
-            if (count > 0) {
-                List<String> urls = redisTemplate.opsForList()
-                    .range("post:" + entry.getUuid() + ":images", 0, -1);
-                if (urls != null && !urls.isEmpty()) {
-                    entry.setImageUrls(urls);
-                }
+            int c = Integer.parseInt(imageCountStr);
+            if (c > 0) {
+                List<String> urls = posts.images(entry.getUuid());
+                if (!urls.isEmpty()) entry.setImageUrls(urls);
             }
         } else if (entry.getUrl() != null) {
-            // Legacy single-image post: backfill imageUrls so clients have one path.
             entry.setImageUrls(List.of(entry.getUrl()));
         }
 
@@ -172,7 +128,6 @@ public class TimelineService {
             entry.setActorUsername(username);
             entry.setActorFullname(fullname);
         }
-
         return entry;
     }
 }

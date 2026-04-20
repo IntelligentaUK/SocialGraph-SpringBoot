@@ -1,110 +1,65 @@
 package com.intelligenta.socialgraph.service;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.intelligenta.socialgraph.Verbs;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.ActionActor;
 import com.intelligenta.socialgraph.model.ActionResponse;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import com.intelligenta.socialgraph.persistence.PostStore;
+import com.intelligenta.socialgraph.persistence.ReactionStore;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-
-/**
- * Service for social actions (like, love, fav, share).
- */
+/** Social actions (like, love, fav, share) backed by {@link ReactionStore}. */
 @Service
 public class ActionService {
 
-    private final StringRedisTemplate redisTemplate;
+    private final ReactionStore reactions;
+    private final PostStore posts;
     private final UserService userService;
 
-    public ActionService(StringRedisTemplate redisTemplate, UserService userService) {
-        this.redisTemplate = redisTemplate;
+    public ActionService(ReactionStore reactions, PostStore posts, UserService userService) {
+        this.reactions = reactions;
+        this.posts = posts;
         this.userService = userService;
     }
 
-    /**
-     * List actors who performed an action on a post.
-     */
     public ActionResponse listActions(Verbs.Action action, String postId, int index, int count) {
-        if (!postExists(postId)) {
-            throw new PostNotFoundException("Post not found");
-        }
+        if (!posts.exists(postId)) throw new PostNotFoundException("Post not found");
 
         long startTime = System.currentTimeMillis();
-        
-        String key = "post:" + postId + action.key();
-        List<String> actorUids = redisTemplate.opsForList().range(key, index, index + count - 1);
+        List<String> actorUids = reactions.listActors(action, postId, index, count);
 
         List<ActionActor> actors = new ArrayList<>();
-        if (actorUids != null) {
-            for (String uid : actorUids) {
-                String username = userService.getUsername(uid);
-                String fullname = userService.getUserField(uid, "fullname");
-                actors.add(new ActionActor(uid, username, fullname));
-            }
+        for (String uid : actorUids) {
+            String username = userService.getUsername(uid);
+            String fullname = userService.getUserField(uid, "fullname");
+            actors.add(new ActionActor(uid, username, fullname));
         }
-
-        long duration = System.currentTimeMillis() - startTime;
-        return new ActionResponse(action, postId, actors, actors.size(), duration);
+        return new ActionResponse(action, postId, actors, actors.size(),
+            System.currentTimeMillis() - startTime);
     }
 
-    /**
-     * Perform an action on a post.
-     */
     public String performAction(Verbs.Action action, String postId, String authenticatedUser) {
-        if (!postExists(postId)) {
-            throw new PostNotFoundException("Post not found");
-        }
-
+        if (!posts.exists(postId)) throw new PostNotFoundException("Post not found");
         if (containsAction(action, postId, authenticatedUser)) {
             return "Already " + action.pastTense() + " Post: " + postId;
         }
-
-        String key = "post:" + postId + action.key();
-        redisTemplate.opsForList().leftPush(key, authenticatedUser);
-        redisTemplate.opsForHash().put(
-            "post:" + postId + ":" + authenticatedUser + ":",
-            action.noun(),
-            "1"
-        );
+        reactions.add(action, postId, authenticatedUser);
         return action.pastTense() + " Post: " + postId;
     }
 
-    /**
-     * Reverse an action on a post.
-     */
     public String reverseAction(Verbs.Action action, String postId, String authenticatedUser) {
-        if (!postExists(postId)) {
-            throw new PostNotFoundException("Post not found");
-        }
-
+        if (!posts.exists(postId)) throw new PostNotFoundException("Post not found");
         if (!containsAction(action, postId, authenticatedUser)) {
             return "Cannot un" + action.noun() + ", not " + action.noun() + ": " + postId;
         }
-
-        String key = "post:" + postId + action.key();
-        redisTemplate.opsForList().remove(key, 0, authenticatedUser);
-        redisTemplate.opsForHash().delete(
-            "post:" + postId + ":" + authenticatedUser + ":",
-            action.noun()
-        );
+        reactions.remove(action, postId, authenticatedUser);
         return "Un" + action.pastTense() + " Post: " + postId;
     }
 
-    /**
-     * Check if an action was performed by user on a post.
-     */
     public boolean containsAction(Verbs.Action action, String postId, String authenticatedUser) {
-        Object value = redisTemplate.opsForHash().get(
-            "post:" + postId + ":" + authenticatedUser + ":", 
-            action.noun()
-        );
-        return value != null;
-    }
-
-    private boolean postExists(String postId) {
-        return Boolean.TRUE.equals(redisTemplate.hasKey("post:" + postId));
+        return reactions.contains(action, postId, authenticatedUser);
     }
 }

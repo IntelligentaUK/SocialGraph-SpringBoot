@@ -2,10 +2,14 @@ package com.intelligenta.socialgraph.service;
 
 import com.intelligenta.socialgraph.ai.ContentModerator;
 import com.intelligenta.socialgraph.config.EmbeddingProperties;
+import com.intelligenta.socialgraph.config.PersistenceProperties;
 import com.intelligenta.socialgraph.exception.ContentBlockedException;
 import com.intelligenta.socialgraph.exception.PostNotFoundException;
 import com.intelligenta.socialgraph.model.StoredObject;
 import com.intelligenta.socialgraph.model.moderation.ModerationDecision;
+import com.intelligenta.socialgraph.persistence.CounterStore;
+import com.intelligenta.socialgraph.persistence.PostStore;
+import com.intelligenta.socialgraph.persistence.TimelineStore;
 import com.intelligenta.socialgraph.service.storage.ObjectStorageService;
 import com.intelligenta.socialgraph.util.ImagePayloads;
 import com.intelligenta.socialgraph.util.Util;
@@ -18,12 +22,19 @@ import org.springframework.stereotype.Service;
 import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Service for sharing posts and status updates.
+ * Post sharing / fan-out. Refactored in phase I-D to persist through the
+ * {@link PostStore}, {@link TimelineStore}, {@link CounterStore}, and the
+ * user / content-filter / relation stores via {@link UserService}. Redis
+ * Streams + a couple of read-only score lookups (edge scores, global social
+ * importance) stay on the direct {@link StringRedisTemplate} for now — they
+ * migrate to Infinispan-native primitives in phases I-H (scores) and I-J
+ * (streams).
  */
 @Service
 public class ShareService {
@@ -32,72 +43,62 @@ public class ShareService {
 
     static final String EMBEDDING_QUEUE = "embedding:queue";
 
+    private final PostStore postStore;
+    private final TimelineStore timelineStore;
+    private final CounterStore counterStore;
     private final StringRedisTemplate redisTemplate;
     private final ObjectStorageService objectStorageService;
     private final UserService userService;
     private final EmbeddingProperties embeddingProperties;
     private final ContentModerator moderator;
+    private final boolean embeddingQueueEnabled;
 
-    public ShareService(StringRedisTemplate redisTemplate,
+    public ShareService(PostStore postStore,
+                        TimelineStore timelineStore,
+                        CounterStore counterStore,
+                        StringRedisTemplate redisTemplate,
                         ObjectStorageService objectStorageService,
                         UserService userService,
                         EmbeddingProperties embeddingProperties,
-                        ContentModerator moderator) {
+                        ContentModerator moderator,
+                        PersistenceProperties persistenceProperties) {
+        this.postStore = postStore;
+        this.timelineStore = timelineStore;
+        this.counterStore = counterStore;
         this.redisTemplate = redisTemplate;
         this.objectStorageService = objectStorageService;
         this.userService = userService;
         this.embeddingProperties = embeddingProperties;
         this.moderator = moderator;
+        this.embeddingQueueEnabled =
+            persistenceProperties.getProvider() == PersistenceProperties.Provider.REDIS;
     }
 
-    /**
-     * Share a photo with URL.
-     */
-    public Map<String, String> sharePhoto(String authenticatedUser, String content, String url) {
+    public Map<String, String> sharePhoto(String user, String content, String url) {
         List<String> urls = url == null ? null : List.of(url);
-        return createStatusUpdate(authenticatedUser, content, "photo", urls, null, null, null);
+        return createStatusUpdate(user, content, "photo", urls, null, null, null);
     }
 
-    /**
-     * Share a photo with bytes.
-     */
-    public Map<String, String> sharePhoto(String authenticatedUser, String content, byte[] bytes) {
-        return sharePhoto(authenticatedUser, content, bytes, null);
+    public Map<String, String> sharePhoto(String user, String content, byte[] bytes) {
+        return sharePhoto(user, content, bytes, null);
     }
 
-    /**
-     * Share a photo with bytes and an optional content type hint.
-     */
-    public Map<String, String> sharePhoto(String authenticatedUser, String content, byte[] bytes, String contentType) {
+    public Map<String, String> sharePhoto(String user, String content, byte[] bytes, String contentType) {
         List<String> urls = null;
         String imageHash = null;
-
         if (bytes != null && bytes.length > 0) {
-            ImagePayloads.ImagePayload imagePayload = ImagePayloads.fromBytes(bytes, contentType);
+            ImagePayloads.ImagePayload p = ImagePayloads.fromBytes(bytes, contentType);
             imageHash = Util.getMD5(bytes);
-            StoredObject storedObject = objectStorageService.upload(
-                bytes,
-                imagePayload.extension(),
-                imagePayload.mimeType()
-            );
-            urls = List.of(storedObject.objectUrl());
+            StoredObject so = objectStorageService.upload(bytes, p.extension(), p.mimeType());
+            urls = List.of(so.objectUrl());
         }
-
-        return createStatusUpdate(authenticatedUser, content, "photo", urls, imageHash, null, null);
+        return createStatusUpdate(user, content, "photo", urls, imageHash, null, null);
     }
 
-    /**
-     * Share multiple photos in a single post. Uploads each byte-array to object
-     * storage (in input order), records the ordered list on {@code post:<id>:images},
-     * and sets {@code imageCount} on the post hash. The first image's MD5 is
-     * stored as the legacy {@code imageHash} for image-block filtering.
-     */
-    public Map<String, String> sharePhotos(String authenticatedUser,
-                                           String content,
-                                           List<byte[]> imageBytes,
-                                           List<String> contentTypes) {
+    public Map<String, String> sharePhotos(String user, String content,
+                                           List<byte[]> imageBytes, List<String> contentTypes) {
         if (imageBytes == null || imageBytes.isEmpty()) {
-            return createStatusUpdate(authenticatedUser, content, "photo", null, null, null, null);
+            return createStatusUpdate(user, content, "photo", null, null, null, null);
         }
         int max = embeddingProperties.getMaxImagesPerPost();
         if (imageBytes.size() > max) {
@@ -115,102 +116,79 @@ public class ShareService {
             StoredObject so = objectStorageService.upload(b, p.extension(), p.mimeType());
             urls.add(so.objectUrl());
         }
-        return createStatusUpdate(authenticatedUser, content, "photo", urls, firstHash, null, null);
+        return createStatusUpdate(user, content, "photo", urls, firstHash, null, null);
     }
 
-    /**
-     * Share a video.
-     */
-    public Map<String, String> shareVideo(String authenticatedUser, String content, String url) {
-        List<String> urls = url == null ? null : List.of(url);
-        return createStatusUpdate(authenticatedUser, content, "video", urls, null, null, null);
+    public Map<String, String> shareVideo(String user, String content, String url) {
+        return createStatusUpdate(user, content, "video", url == null ? null : List.of(url), null, null, null);
     }
 
-    /**
-     * Share an audio clip.
-     */
-    public Map<String, String> shareAudio(String authenticatedUser, String content, String url) {
-        List<String> urls = url == null ? null : List.of(url);
-        return createStatusUpdate(authenticatedUser, content, "audio", urls, null, null, null);
+    public Map<String, String> shareAudio(String user, String content, String url) {
+        return createStatusUpdate(user, content, "audio", url == null ? null : List.of(url), null, null, null);
     }
 
-    /**
-     * Share a text-only post.
-     */
-    public Map<String, String> shareText(String authenticatedUser, String content) {
-        return createStatusUpdate(authenticatedUser, content, "text", null, null, null, null);
+    public Map<String, String> shareText(String user, String content) {
+        return createStatusUpdate(user, content, "text", null, null, null, null);
     }
 
-    /**
-     * Reply to an existing post.
-     */
-    public Map<String, String> replyToPost(String authenticatedUser, String parentPostId, String content) {
+    public Map<String, String> replyToPost(String user, String parentPostId, String content) {
         ensurePostExists(parentPostId);
-        return createStatusUpdate(authenticatedUser, content, "reply", null, null, parentPostId, null);
+        return createStatusUpdate(user, content, "reply", null, null, parentPostId, null);
     }
 
-    /**
-     * Reshare an existing post.
-     */
-    public Map<String, String> resharePost(String authenticatedUser, String postId, String content) {
+    public Map<String, String> resharePost(String user, String postId, String content) {
         ensurePostExists(postId);
-        return createStatusUpdate(authenticatedUser, content, "reshare", null, null, null, postId);
+        return createStatusUpdate(user, content, "reshare", null, null, null, postId);
     }
 
     int getMaxImagesPerPost() {
         return embeddingProperties.getMaxImagesPerPost();
     }
 
-    /**
-     * Share/reshare an existing post.
-     */
     public Map<String, String> reshare(String authenticatedUser, String postId) {
-        if (authenticatedUser == null) {
-            return null;
-        }
+        if (authenticatedUser == null) return null;
 
         long startTime = System.currentTimeMillis();
-        Map<Object, Object> postObj = redisTemplate.opsForHash().entries("post:" + postId);
+        Map<String, Object> postObj = postStore.get(postId).orElse(new LinkedHashMap<>());
         Map<String, String> post = new HashMap<>();
-        postObj.forEach((k, v) -> post.put((String) k, (String) v));
+        postObj.forEach((k, v) -> post.put(k, v == null ? null : String.valueOf(v)));
 
         if (!post.isEmpty()) {
             List<String> keywords = getWords(post.get("content"));
             pushGraph(authenticatedUser, postId, keywords, readImageHash(post));
             post.put("duration", String.valueOf(System.currentTimeMillis() - startTime));
         }
-
         return post;
     }
 
     public Map<String, String> getPost(String postId) {
-        Map<Object, Object> postObject = redisTemplate.opsForHash().entries("post:" + postId);
-        if (postObject.isEmpty()) {
-            throw new PostNotFoundException("Post not found");
-        }
-
+        Map<String, Object> raw = postStore.get(postId)
+            .orElseThrow(() -> new PostNotFoundException("Post not found"));
         Map<String, String> post = new HashMap<>();
-        postObject.forEach((key, value) -> post.put(String.valueOf(key), value != null ? String.valueOf(value) : null));
+        raw.forEach((k, v) -> post.put(k, v == null ? null : String.valueOf(v)));
         return post;
     }
 
-    public Map<String, String> updatePost(String authenticatedUser, String postId, String content) {
+    public Map<String, String> updatePost(String user, String postId, String content) {
         Map<String, String> post = getPost(postId);
-        userService.ensureAuthor(authenticatedUser, post.get("uid"));
+        userService.ensureAuthor(user, post.get("uid"));
 
-        redisTemplate.opsForHash().put("post:" + postId, "content", content);
         String updated = Util.unixtime();
-        redisTemplate.opsForHash().put("post:" + postId, "updated", updated);
+        Map<String, String> updates = new LinkedHashMap<>();
+        updates.put("content", content);
+        updates.put("updated", updated);
+        postStore.update(postId, updates);
+
         post.put("content", content);
         post.put("updated", updated);
         return post;
     }
 
-    public Map<String, String> deletePost(String authenticatedUser, String postId) {
+    public Map<String, String> deletePost(String user, String postId) {
         Map<String, String> post = getPost(postId);
-        userService.ensureAuthor(authenticatedUser, post.get("uid"));
+        userService.ensureAuthor(user, post.get("uid"));
 
-        redisTemplate.delete("post:" + postId);
+        postStore.delete(postId);
 
         Map<String, String> response = new HashMap<>();
         response.put("deleted", "true");
@@ -221,15 +199,11 @@ public class ShareService {
     private Map<String, String> createStatusUpdate(String authenticatedUser, String content,
                                                    String type, List<String> imageUrls, String imageHash,
                                                    String parentPostId, String sharedPostId) {
-        if (authenticatedUser == null) {
-            return null;
-        }
+        if (authenticatedUser == null) return null;
 
         if (moderator.enabled() && content != null && !content.isBlank()) {
             ModerationDecision decision = moderator.moderate(content);
-            if (decision.blocked()) {
-                throw new ContentBlockedException(decision);
-            }
+            if (decision.blocked()) throw new ContentBlockedException(decision);
         }
 
         long startTime = System.currentTimeMillis();
@@ -245,52 +219,28 @@ public class ShareService {
         post.put("created", Util.unixtime());
         putIfPresent(post, "content", content);
         putIfPresent(post, "url", primaryUrl);
-        if (imageCount > 0) {
-            post.put("imageCount", Integer.toString(imageCount));
-        }
-
-        if (imageHash != null) {
-            post.put("imageHash", imageHash);
-        }
-        if (parentPostId != null) {
-            post.put("parentId", parentPostId);
-        }
-        if (sharedPostId != null) {
-            post.put("sharedPostId", sharedPostId);
-        }
+        if (imageCount > 0)       post.put("imageCount", Integer.toString(imageCount));
+        if (imageHash != null)    post.put("imageHash", imageHash);
+        if (parentPostId != null) post.put("parentId", parentPostId);
+        if (sharedPostId != null) post.put("sharedPostId", sharedPostId);
 
         List<String> keywords = getWords(content);
 
         log.info("Creating status update: {}", post);
 
-        // Execute Redis transaction
-        redisTemplate.multi();
-        redisTemplate.opsForHash().putAll("post:" + postId, post);
-        if (imageCount > 1) {
-            redisTemplate.opsForList().rightPushAll(
-                "post:" + postId + ":images",
-                imageUrls.toArray(new String[0]));
-        } else if (imageCount == 1) {
-            redisTemplate.opsForList().rightPush("post:" + postId + ":images", primaryUrl);
-        }
+        // Atomic create: post hash + images + per-user counters in one tx.
+        postStore.create(postId, post, imageUrls, authenticatedUser, type);
+
+        // Self-timeline push. Other followers get it in pushGraph below.
         addPostToTimeline(authenticatedUser, postId, authenticatedUser);
 
         if (parentPostId != null) {
-            redisTemplate.opsForList().leftPush("post:" + parentPostId + ":replies", postId);
+            postStore.addReply(parentPostId, postId);
         }
-
-        if ("photo".equals(type)) {
-            redisTemplate.opsForHash().increment("photos", authenticatedUser, 1);
-        } else if ("video".equals(type)) {
-            redisTemplate.opsForHash().increment("videos", authenticatedUser, 1);
-        } else if ("text".equals(type) || "reply".equals(type) || "reshare".equals(type)) {
-            redisTemplate.opsForHash().increment("posts", authenticatedUser, 1);
-        }
-        redisTemplate.exec();
 
         pushGraph(authenticatedUser, postId, keywords, imageHash);
 
-        if (shouldEmitEmbedding(type, content, imageCount)) {
+        if (embeddingQueueEnabled && shouldEmitEmbedding(type, content, imageCount)) {
             redisTemplate.opsForStream().add(MapRecord.create(
                 EMBEDDING_QUEUE,
                 Map.of("postId", postId, "authorUid", authenticatedUser)));
@@ -298,39 +248,22 @@ public class ShareService {
 
         post.remove("imageHash");
         post.put("duration", String.valueOf(System.currentTimeMillis() - startTime));
-
         return post;
     }
 
-    /**
-     * Decides whether the post produces an embedding. Audio and video posts
-     * are included (the sidecar's E4B model handles them via
-     * {@code /summarize/audio} and {@code /summarize/video}). Text/reply/reshare
-     * posts without any content are excluded.
-     */
     private static boolean shouldEmitEmbedding(String type, String content, int imageCount) {
         if ("audio".equals(type) || "video".equals(type)) return true;
         boolean hasContent = content != null && !content.isBlank();
         return hasContent || imageCount > 0;
     }
 
-    /**
-     * Push post to followers' timelines.
-     */
     private void pushGraph(String authenticatedUser, String postId, List<String> keywords, String imageHash) {
-        Set<String> followers = redisTemplate.opsForSet().members("user:" + authenticatedUser + ":followers");
-
-        if (followers != null) {
-            for (String followerUid : followers) {
-                if (shouldDeliver(followerUid, authenticatedUser, keywords, imageHash)) {
-                    addPostToTimeline(followerUid, postId, authenticatedUser);
-                }
+        Set<String> followers = userService.followerUids(authenticatedUser);
+        for (String followerUid : followers) {
+            if (shouldDeliver(followerUid, authenticatedUser, keywords, imageHash)) {
+                addPostToTimeline(followerUid, postId, authenticatedUser);
             }
         }
-    }
-
-    private boolean negativeKeywordNotFound(String uid, List<String> words) {
-        return !userService.hasNegativeKeyword(uid, words);
     }
 
     private Double getConnectionZScore(String authenticatedUser, String targetUid) {
@@ -344,37 +277,22 @@ public class ShareService {
     }
 
     private void addPostToTimeline(String recipientUid, String postId, String authorUid) {
-        double everyoneScore = getSocialImportance(authorUid) != null ? getSocialImportance(authorUid) : 0.0;
-        redisTemplate.opsForList().leftPush("user:" + recipientUid + ":timeline", postId);
-        redisTemplate.opsForZSet().add(
-            "user:" + recipientUid + ":timeline:personal:importance",
-            postId,
-            getConnectionZScore(authorUid, recipientUid)
-        );
-        redisTemplate.opsForZSet().add(
-            "user:" + recipientUid + ":timeline:everyone:importance",
-            postId,
-            everyoneScore
-        );
+        Double ever = getSocialImportance(authorUid);
+        double everyoneScore = ever == null ? 0.0 : ever;
+        double personalScore = getConnectionZScore(authorUid, recipientUid);
+        double fifoTs = System.currentTimeMillis() / 1000.0;
+        timelineStore.push(recipientUid, postId, fifoTs, personalScore, everyoneScore);
     }
 
     private boolean shouldDeliver(String recipientUid, String authorUid, List<String> keywords, String imageHash) {
-        if (!userService.canViewContent(recipientUid, authorUid)) {
-            return false;
-        }
-        if (userService.hasMuted(recipientUid, authorUid)) {
-            return false;
-        }
-        if (!negativeKeywordNotFound(recipientUid, keywords)) {
-            return false;
-        }
+        if (!userService.canViewContent(recipientUid, authorUid)) return false;
+        if (userService.hasMuted(recipientUid, authorUid)) return false;
+        if (userService.hasNegativeKeyword(recipientUid, keywords)) return false;
         return !userService.isImageBlocked(recipientUid, imageHash);
     }
 
     private void ensurePostExists(String postId) {
-        if (!Boolean.TRUE.equals(redisTemplate.hasKey("post:" + postId))) {
-            throw new PostNotFoundException("Post not found");
-        }
+        if (!postStore.exists(postId)) throw new PostNotFoundException("Post not found");
     }
 
     private String readImageHash(Map<String, String> post) {
@@ -383,20 +301,13 @@ public class ShareService {
     }
 
     private void putIfPresent(Map<String, String> target, String key, String value) {
-        if (value != null) {
-            target.put(key, value);
-        }
+        if (value != null) target.put(key, value);
     }
 
-    /**
-     * Parse words from text content.
-     */
     public static List<String> getWords(String text) {
         List<String> words = new ArrayList<>();
-        if (text == null) {
-            return words;
-        }
-        
+        if (text == null) return words;
+
         BreakIterator breakIterator = BreakIterator.getWordInstance();
         breakIterator.setText(text);
         int lastIndex = breakIterator.first();
@@ -405,22 +316,15 @@ public class ShareService {
             lastIndex = breakIterator.next();
             if (lastIndex != BreakIterator.DONE && Character.isLetterOrDigit(text.charAt(firstIndex))) {
                 String word = text.substring(firstIndex, lastIndex);
-                if (!words.contains(word)) {
-                    words.add(word);
-                }
+                if (!words.contains(word)) words.add(word);
             }
         }
         return words;
     }
 
-    /**
-     * Extract hashtags from text.
-     */
     public static List<String> getHashTags(String text) {
         List<String> hashTags = new ArrayList<>();
-        getWords(text).stream()
-            .filter(s -> s.startsWith("#"))
-            .forEach(hashTags::add);
+        getWords(text).stream().filter(s -> s.startsWith("#")).forEach(hashTags::add);
         return hashTags;
     }
 }

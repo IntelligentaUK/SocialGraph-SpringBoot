@@ -1,5 +1,9 @@
 package com.intelligenta.socialgraph.config;
 
+import java.util.Optional;
+
+import com.intelligenta.socialgraph.persistence.TokenStore;
+import com.intelligenta.socialgraph.persistence.UserStore;
 import com.intelligenta.socialgraph.security.TokenAuthenticationFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,9 +15,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.redis.core.HashOperations;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -35,9 +36,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 )
 class SecurityConfigTest {
 
-    private static final StringRedisTemplate REDIS_TEMPLATE = Mockito.mock(StringRedisTemplate.class);
-    private static final ValueOperations<String, String> VALUE_OPERATIONS = Mockito.mock(ValueOperations.class);
-    private static final HashOperations<String, Object, Object> HASH_OPERATIONS = Mockito.mock(HashOperations.class);
+    @SuppressWarnings("unchecked")
+    private static final TokenStore TOKENS = Mockito.mock(TokenStore.class);
+    @SuppressWarnings("unchecked")
+    private static final UserStore USERS = Mockito.mock(UserStore.class);
 
     private MockMvc mockMvc;
 
@@ -46,9 +48,7 @@ class SecurityConfigTest {
 
     @BeforeEach
     void setUp() {
-        Mockito.reset(REDIS_TEMPLATE, VALUE_OPERATIONS, HASH_OPERATIONS);
-        when(REDIS_TEMPLATE.opsForValue()).thenReturn(VALUE_OPERATIONS);
-        when(REDIS_TEMPLATE.opsForHash()).thenReturn(HASH_OPERATIONS);
+        Mockito.reset(TOKENS, USERS);
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
             .apply(springSecurity())
             .build();
@@ -59,7 +59,6 @@ class SecurityConfigTest {
         mockMvc.perform(get("/api/ping"))
             .andExpect(status().isOk())
             .andExpect(content().string("public"));
-
         mockMvc.perform(get("/api/session"))
             .andExpect(status().isOk())
             .andExpect(content().string("session"));
@@ -73,8 +72,8 @@ class SecurityConfigTest {
 
     @Test
     void protectedEndpointAcceptsValidBearerToken() throws Exception {
-        when(VALUE_OPERATIONS.get("tokens:good-token")).thenReturn("uid-1");
-        when(HASH_OPERATIONS.get("user:uid", "uid-1")).thenReturn("alice");
+        when(TOKENS.resolve("good-token")).thenReturn(Optional.of("uid-1"));
+        when(USERS.findUsernameByUid("uid-1")).thenReturn(Optional.of("alice"));
 
         mockMvc.perform(get("/api/private")
                 .header("Authorization", "Bearer good-token")
@@ -88,8 +87,8 @@ class SecurityConfigTest {
         mockMvc.perform(get("/api/aes/key"))
             .andExpect(status().isForbidden());
 
-        when(VALUE_OPERATIONS.get("tokens:good-token")).thenReturn("uid-1");
-        when(HASH_OPERATIONS.get("user:uid", "uid-1")).thenReturn("alice");
+        when(TOKENS.resolve("good-token")).thenReturn(Optional.of("uid-1"));
+        when(USERS.findUsernameByUid("uid-1")).thenReturn(Optional.of("alice"));
 
         mockMvc.perform(get("/api/aes/key")
                 .header("Authorization", "Bearer good-token")
@@ -106,39 +105,16 @@ class SecurityConfigTest {
     @RestController
     @RequestMapping("/api")
     static class ProbeController {
-
-        @GetMapping("/ping")
-        String ping() {
-            return "public";
-        }
-
-        @GetMapping("/private")
-        String privateEndpoint(@RequestHeader(value = "Authorization", required = false) String ignored) {
-            return "private";
-        }
-
-        @GetMapping("/session")
-        String session() {
-            return "session";
-        }
+        @GetMapping("/ping") String ping() { return "public"; }
+        @GetMapping("/private") String privateEndpoint(@RequestHeader(value = "Authorization", required = false) String ignored) { return "private"; }
+        @GetMapping("/session") String session() { return "session"; }
     }
 
     @Configuration(proxyBeanMethods = false)
     static class TestBeans {
-
-        @Bean
-        TokenAuthenticationFilter tokenAuthenticationFilter() {
-            return new TokenAuthenticationFilter(redisTemplate());
-        }
-
-        @Bean
-        AppProperties appProperties() {
-            return new AppProperties();
-        }
-
-        @Bean
-        StringRedisTemplate redisTemplate() {
-            return REDIS_TEMPLATE;
-        }
+        @Bean TokenAuthenticationFilter tokenAuthenticationFilter() { return new TokenAuthenticationFilter(TOKENS, USERS); }
+        @Bean AppProperties appProperties() { return new AppProperties(); }
+        @Bean TokenStore tokenStore() { return TOKENS; }
+        @Bean UserStore userStore() { return USERS; }
     }
 }

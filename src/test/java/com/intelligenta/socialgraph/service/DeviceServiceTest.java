@@ -1,19 +1,18 @@
 package com.intelligenta.socialgraph.service;
 
+import java.util.Set;
+
+import com.intelligenta.socialgraph.persistence.DeviceStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.SetOperations;
-import org.springframework.data.redis.core.StringRedisTemplate;
-
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,43 +20,33 @@ import static org.mockito.Mockito.when;
 class DeviceServiceTest {
 
     @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private SetOperations<String, String> setOperations;
+    private DeviceStore devices;
 
     private DeviceService deviceService;
 
     @BeforeEach
     void setUp() {
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
-        deviceService = new DeviceService(redisTemplate);
+        deviceService = new DeviceService(devices);
     }
 
     @Test
     void registerGeneratesIdentifierWhenDeviceIsMissing() {
-        when(setOperations.add(anyString(), anyString())).thenReturn(1L);
-
-        String result = deviceService.register("alice", null);
-
-        assertEquals("Device Registered", result);
-        verify(setOperations).add(anyString(), anyString());
+        when(devices.add(eq("alice"), anyString())).thenReturn(true);
+        assertEquals("Device Registered", deviceService.register("alice", null));
+        verify(devices).add(eq("alice"), anyString());
     }
 
     @Test
-    void registerReturnsAlreadyRegisteredWhenSetAddReturnsZero() {
-        when(setOperations.add("user:alice:devices", "device-1")).thenReturn(0L);
-
-        String result = deviceService.register("alice", "device-1");
-
-        assertEquals("Device Already Registered", result);
+    void registerReturnsAlreadyRegisteredWhenStoreReturnsFalse() {
+        when(devices.add("alice", "device-1")).thenReturn(false);
+        assertEquals("Device Already Registered", deviceService.register("alice", "device-1"));
     }
 
     @Test
-    void deregisterAndMembershipQueriesUseRedisSetOperations() {
-        when(setOperations.remove("user:alice:devices", "device-1")).thenReturn(1L);
-        when(setOperations.isMember("user:alice:devices", "device-1")).thenReturn(false);
-        when(setOperations.members("user:alice:devices")).thenReturn(Set.of("device-2"));
+    void deregisterAndMembershipQueriesUseStore() {
+        when(devices.remove("alice", "device-1")).thenReturn(true);
+        when(devices.contains("alice", "device-1")).thenReturn(false);
+        when(devices.list("alice")).thenReturn(Set.of("device-2"));
 
         assertEquals("Device Deregistered", deviceService.deregister("alice", "device-1"));
         assertFalse(deviceService.isRegistered("alice", "device-1"));

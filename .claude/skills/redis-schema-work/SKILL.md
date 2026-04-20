@@ -1,21 +1,30 @@
 ---
 name: redis-schema-work
-description: Use when adding or changing any Redis key — new hash field, new list, new zset, new counter, new key prefix — in SocialGraph
-when-to-use: Any change that calls redisTemplate.opsForHash/Set/List/ZSet/Value with a new key shape, or modifies an existing key's structure
+description: Use when adding or changing any Redis key — new hash field, new list, new zset, new counter, new key prefix — in SocialGraph. For changes that also have an Infinispan side, pair with `persistence-work`.
+when-to-use: Any change to the Redis-adapter keyspace (Redis default provider OR Infinispan RESP-compat mode, which shares the same keys). If you're writing a new store interface or Infinispan cache, use `persistence-work` as well.
 ---
 
 # Redis schema work
 
-Redis is the entire persistence layer for SocialGraph. Every social fact, every
-counter, every timeline view, every reaction, every block — all of it lives in
-Redis. The schema is documented exhaustively in
+Redis is one of two persistence backends SocialGraph supports; the other is
+Infinispan. Under `persistence.provider=redis` (default) and under
+`persistence.provider=infinispan` / `client-mode=resp`, **the same Redis
+keyspace is in use** — the Lettuce client's writes land on Redis or on
+Infinispan's RESP endpoint depending on the provider selection, but the key
+shapes are identical. This page and this skill cover the Redis keyspace;
+the Infinispan-native cache layout lives in
+[`infinispan-schema.md`](../../../docs/internals/infinispan-schema.md).
+
+The Redis schema is documented exhaustively in
 [`docs/internals/redis-schema.md`](../../../docs/internals/redis-schema.md);
 that page is the single source of truth.
 
 Drifting code from the schema doc is the second most common way to ship a
 silent breakage in this repo.
 
-Use this skill **before** you start editing.
+Use this skill **before** you start editing. If your change introduces a new
+store interface or touches the Redis/Infinispan dual implementation, pair
+this skill with [`persistence-work`](../persistence-work/SKILL.md).
 
 ## Triggers
 

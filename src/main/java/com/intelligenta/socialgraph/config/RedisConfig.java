@@ -6,6 +6,7 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -16,6 +17,18 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 /**
  * Redis configuration for Spring Data Redis.
+ *
+ * <p>The three templates ({@link StringRedisTemplate}, {@link RedisTemplate})
+ * are always wired — they operate over whatever endpoint Lettuce is pointed at
+ * (Redis Stack by default; Infinispan's RESP endpoint when
+ * {@code persistence.provider=infinispan} and {@code client-mode=resp}, via
+ * {@link PersistenceEnvironmentPostProcessor}).
+ *
+ * <p>The RediSearch-specific client and binary connection are gated on
+ * {@code persistence.provider=redis} because Infinispan's RESP endpoint does
+ * not implement the {@code FT.*} command family. Phase I-I wires an
+ * Infinispan-native replacement; until then, vector search endpoints are
+ * absent when Infinispan is the selected provider.
  */
 @Configuration
 public class RedisConfig {
@@ -29,6 +42,7 @@ public class RedisConfig {
      * float32 vectors be sent as binary blobs).
      */
     @Bean
+    @ConditionalOnProperty(prefix = "persistence", name = "provider", havingValue = "redis", matchIfMissing = true)
     public RedisClient redisSearchClient(
             @Value("${spring.data.redis.host:localhost}") String host,
             @Value("${spring.data.redis.port:6379}") int port,
@@ -42,6 +56,7 @@ public class RedisConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(prefix = "persistence", name = "provider", havingValue = "redis", matchIfMissing = true)
     public StatefulRedisConnection<byte[], byte[]> redisSearchBinaryConnection(RedisClient client) {
         this.searchConnection = client.connect(ByteArrayCodec.INSTANCE);
         return searchConnection;
